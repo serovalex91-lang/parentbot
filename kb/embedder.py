@@ -15,6 +15,11 @@ def get_model():
     return _model
 
 
+def warmup():
+    """Предзагрузить модель при старте чтобы первый запрос не тормозил."""
+    get_model()
+
+
 def embed_texts(texts: List[str]) -> List[List[float]]:
     """Получить эмбеддинги для списка текстов."""
     model = get_model()

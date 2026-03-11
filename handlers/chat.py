@@ -99,7 +99,7 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
         query=user_text,
         age_months=age_months,
         excluded_book_ids=excluded_ids,
-        n_results=10,
+        n_results=5,
     )
     kb_text = format_chunks_for_prompt(chunks)
 

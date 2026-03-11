@@ -40,7 +40,8 @@ def age_range_keyboard() -> InlineKeyboardMarkup:
     ]
     for label, value in ranges:
         builder.button(text=label, callback_data=f"agerange:{value}")
-    builder.adjust(2)
+    builder.button(text="🤖 Определить автоматически", callback_data="agerange:auto")
+    builder.adjust(2, 2, 2, 1)
     return builder.as_markup()
 
 
@@ -84,6 +85,8 @@ def library_keyboard(
 def profile_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     fields = [
+        ("👤 Роль", "role"),
+        ("⚧ Пол ребёнка", "child_gender"),
         ("👶 Имя ребёнка", "child_name"),
         ("⚠️ Особенности", "child_features"),
         ("🌟 Характер", "child_character"),
@@ -92,6 +95,25 @@ def profile_keyboard() -> InlineKeyboardMarkup:
     ]
     for label, field in fields:
         builder.button(text=f"{label} [изменить]", callback_data=f"profile_edit:{field}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def gender_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👦 Мальчик", callback_data="gender:boy")
+    builder.button(text="👧 Девочка", callback_data="gender:girl")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def admin_keyboard(whitelist: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Добавить пользователя", callback_data="admin:add")
+    builder.button(text="➖ Удалить пользователя", callback_data="admin:remove")
+    builder.button(text="📋 Список whitelist", callback_data="admin:list")
+    builder.button(text="📊 Статистика KB", callback_data="admin:stats")
+    builder.button(text="📢 Рассылка", callback_data="admin:broadcast")
     builder.adjust(1)
     return builder.as_markup()
 

@@ -12,6 +12,7 @@ from db.schema import init_db
 from middlewares.auth import AuthMiddleware
 from handlers import start, chat, pdf_upload, my_child, help, admin
 from kb.chroma_client import init_chroma
+from kb.embedder import warmup as warmup_embedder
 from services.claude_client import init_claude
 from services.scheduler import start_scheduler, stop_scheduler
 
@@ -39,6 +40,7 @@ async def main():
     # Инициализировать ChromaDB и Claude
     init_chroma(config.chroma_dir)
     init_claude(config.anthropic_api_key)
+    warmup_embedder()  # предзагрузить модель эмбеддингов
 
     bot = Bot(
         token=config.bot_token,
@@ -50,13 +52,13 @@ async def main():
     dp.message.middleware(AuthMiddleware(config))
     dp.callback_query.middleware(AuthMiddleware(config))
 
-    # Роутеры (порядок важен: admin перед chat)
+    # Роутеры (порядок важен: специфичные до chat)
     dp.include_router(start.router)
     dp.include_router(admin.router)
+    dp.include_router(help.router)
     dp.include_router(pdf_upload.router)
     dp.include_router(my_child.router)
     dp.include_router(chat.router)
-    dp.include_router(help.router)
 
     # Планировщик — запускать через startup hook
     async def on_startup():

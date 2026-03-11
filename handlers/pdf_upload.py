@@ -1,5 +1,5 @@
 import os
-import json
+import re
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, Document
 from aiogram.fsm.context import FSMContext
@@ -16,6 +16,47 @@ from kb.chroma_client import add_chunks
 router = Router()
 
 MAX_PDF_SIZE = 20 * 1024 * 1024  # 20 MB
+
+AGE_LABELS = {
+    "0:12": "0–12 мес",
+    "12:36": "1–3 года",
+    "36:84": "3–7 лет",
+    "84:144": "7–12 лет",
+    "144:216": "12–18 лет",
+    "0:999": "любой возраст",
+}
+
+
+async def _detect_age_range(chunks: list, config: Config) -> tuple[int, int]:
+    """Спрашивает Claude какой возрастной диапазон у книги. Возвращает (age_min, age_max)."""
+    from services.claude_client import get_client
+    sample = "\n\n".join(chunks[:5])[:3000]
+    prompt = (
+        "Прочитай фрагменты книги и определи для какого возраста детей она написана.\n"
+        "Ответь ТОЛЬКО одной строкой в формате: MIN:MAX\n"
+        "Где MIN и MAX — возраст в месяцах. Варианты:\n"
+        "0:12 (младенцы 0-12 мес)\n"
+        "12:36 (1-3 года)\n"
+        "36:84 (3-7 лет)\n"
+        "84:144 (7-12 лет)\n"
+        "144:216 (12-18 лет)\n"
+        "0:999 (любой возраст, универсальная)\n\n"
+        f"Фрагменты книги:\n{sample}"
+    )
+    try:
+        client = get_client()
+        response = await client.messages.create(
+            model=config.claude_model,
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        match = re.search(r"(\d+):(\d+)", text)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    except Exception as e:
+        logger.warning("Ошибка автоопределения возраста: {}", e)
+    return 0, 999  # fallback: любой возраст
 
 
 @router.message(F.document)
@@ -50,8 +91,13 @@ async def process_age_range(
     db_user: dict = None,
 ):
     parts = callback.data.split(":")
-    age_min = int(parts[1])
-    age_max = int(parts[2])
+    is_auto = parts[1] == "auto"
+
+    if not is_auto:
+        age_min = int(parts[1])
+        age_max = int(parts[2])
+    else:
+        age_min = age_max = None  # определим после скачивания
 
     data = await state.get_data()
     file_id = data["file_id"]
@@ -102,7 +148,17 @@ async def process_age_range(
         )
         return
 
-    await callback.message.edit_text(f"⏳ Создаю эмбеддинги ({len(chunks)} фрагментов)...")
+    # Автоопределение возраста
+    if is_auto:
+        await callback.message.edit_text("🤖 Анализирую содержимое книги...")
+        age_min, age_max = await _detect_age_range(chunks, config)
+        age_label = AGE_LABELS.get(f"{age_min}:{age_max}", f"{age_min}–{age_max} мес")
+        await callback.message.edit_text(
+            f"🤖 Определил возраст: <b>{age_label}</b>\n"
+            f"⏳ Создаю эмбеддинги ({len(chunks)} фрагментов)..."
+        )
+    else:
+        await callback.message.edit_text(f"⏳ Создаю эмбеддинги ({len(chunks)} фрагментов)...")
 
     # Создать эмбеддинги
     try:
@@ -142,26 +198,18 @@ async def process_age_range(
     # Сохранить IDs чанков в БД
     await db.update_book_chroma_ids(book_id, chunk_ids)
 
-    age_labels = {
-        "0:12": "0–12 мес",
-        "12:36": "1–3 года",
-        "36:84": "3–7 лет",
-        "84:144": "7–12 лет",
-        "144:216": "12–18 лет",
-        "0:999": "любой возраст",
-    }
-    age_label = age_labels.get(f"{age_min}:{age_max}", f"{age_min}–{age_max} мес")
-
+    age_label = AGE_LABELS.get(f"{age_min}:{age_max}", f"{age_min}–{age_max} мес")
+    auto_note = " (определён автоматически 🤖)" if is_auto else ""
     shared_note = "\n📚 Книга добавлена в <b>общую базу</b> и доступна всем пользователям." if scope == "shared" else ""
 
     await callback.message.edit_text(
         f"✅ Книга добавлена!\n\n"
         f"📄 <b>{original_name}</b>\n"
-        f"👶 Возраст: {age_label}\n"
+        f"👶 Возраст: {age_label}{auto_note}\n"
         f"🔢 Проиндексировано фрагментов: <b>{len(chunks)}</b>"
         f"{shared_note}"
     )
     logger.info(
-        "PDF загружен: book_id={}, scope={}, chunks={}, user={}",
-        book_id, scope, len(chunks), user_id,
+        "PDF загружен: book_id={}, scope={}, chunks={}, age={}:{}, user={}",
+        book_id, scope, len(chunks), age_min, age_max, user_id,
     )

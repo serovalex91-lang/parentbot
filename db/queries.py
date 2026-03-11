@@ -17,6 +17,14 @@ def get_db_path() -> str:
 
 # ─── Whitelist ────────────────────────────────────────────────────────────────
 
+async def get_whitelist() -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(_db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM whitelist ORDER BY added_at") as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
 async def is_whitelisted(telegram_id: int) -> bool:
     async with aiosqlite.connect(_db_path) as db:
         async with db.execute(

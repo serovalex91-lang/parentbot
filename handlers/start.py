@@ -3,10 +3,11 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
+from loguru import logger
 
 from config import Config
 from states.fsm import Onboarding, SetDate, EditProfile
-from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard
+from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
 import db.queries as db
 
@@ -18,6 +19,7 @@ router = Router()
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, config: Config = None):
     user = message.from_user
+    logger.info("/start от user.id={} username={}", user.id, user.username)
 
     # Проверить whitelist
     if not await db.is_whitelisted(user.id):
@@ -65,6 +67,17 @@ async def process_role(callback: CallbackQuery, state: FSMContext):
     role = callback.data.split(":")[1]
     role_names = {"papa": "Папа 👨", "mama": "Мама 👩", "both": "Оба родителя 👫"}
     await db.set_user_role(callback.from_user.id, role)
+
+    # Если пользователь уже онбордингован — просто подтвердить смену роли
+    db_user = await db.get_user(callback.from_user.id)
+    if db_user and db_user.get("onboarded_at"):
+        await state.clear()
+        await callback.message.edit_text(
+            f"✅ Роль изменена: <b>{role_names.get(role, role)}</b>"
+        )
+        await callback.answer()
+        return
+
     await state.set_state(Onboarding.waiting_birthdate)
     await callback.message.edit_text(
         f"Отлично, {role_names.get(role, role)}!\n\n"
@@ -153,10 +166,14 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
     role_names = {"papa": "Папа 👨", "mama": "Мама 👩", "both": "Оба 👫"}
     role_text = role_names.get(db_user.get("role", ""), "не указана")
 
+    gender_map = {"boy": "👦 Мальчик", "girl": "👧 Девочка"}
+    gender_text = gender_map.get(context.get("child_gender", ""), "—")
+
     text = (
         "<b>👤 Мой профиль</b>\n\n"
         f"Роль: {role_text}\n"
         f"Возраст ребёнка: <b>{age_text}</b>\n\n"
+        f"⚧ Пол: {gender_text}\n"
         f"👶 Имя: {context.get('child_name', '—')}\n"
         f"⚠️ Особенности: {context.get('child_features', '—')}\n"
         f"🌟 Характер: {context.get('child_character', '—')}\n"
@@ -169,6 +186,20 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
 @router.callback_query(F.data.startswith("profile_edit:"))
 async def profile_edit_start(callback: CallbackQuery, state: FSMContext):
     field = callback.data.split(":")[1]
+
+    if field == "role":
+        await state.set_state(Onboarding.waiting_role)
+        await callback.message.answer(
+            "👤 Выбери новую роль:",
+            reply_markup=role_keyboard(),
+        )
+        await callback.answer()
+        return
+
+    if field == "child_gender":
+        await callback.message.answer("⚧ Выбери пол ребёнка:", reply_markup=gender_keyboard())
+        await callback.answer()
+        return
 
     if field == "child_birthdate":
         await state.set_state(SetDate.waiting_birthdate)
@@ -215,3 +246,19 @@ async def profile_edit_save(message: Message, state: FSMContext, db_user: dict =
     await db.set_child_context(message.from_user.id, context)
     await state.clear()
     await message.answer("✅ Профиль обновлён!")
+
+
+@router.callback_query(F.data.startswith("gender:"))
+async def process_gender(callback: CallbackQuery, db_user: dict = None):
+    gender = callback.data.split(":")[1]
+    gender_names = {"boy": "👦 Мальчик", "girl": "👧 Девочка"}
+    context = {}
+    if db_user and db_user.get("child_context"):
+        try:
+            context = json.loads(db_user["child_context"])
+        except Exception:
+            pass
+    context["child_gender"] = gender
+    await db.set_child_context(callback.from_user.id, context)
+    await callback.message.edit_text(f"✅ Пол ребёнка: <b>{gender_names.get(gender, gender)}</b>")
+    await callback.answer()

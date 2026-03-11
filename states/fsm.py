@@ -17,3 +17,9 @@ class EditProfile(StatesGroup):
 
 class SetDate(StatesGroup):
     waiting_birthdate = State()
+
+
+class AdminPanel(StatesGroup):
+    waiting_add_id = State()
+    waiting_remove_id = State()
+    waiting_broadcast_text = State()

@@ -43,7 +43,7 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
         query=query,
         age_months=age.months,
         excluded_book_ids=excluded_ids,
-        n_results=10,
+        n_results=5,
     )
 
     if not chunks:
