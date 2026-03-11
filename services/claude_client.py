@@ -1,3 +1,4 @@
+import re
 from typing import List, Dict, Optional
 import anthropic
 from loguru import logger
@@ -5,6 +6,9 @@ from loguru import logger
 from config import Config
 
 _client: Optional[anthropic.AsyncAnthropic] = None
+
+MODEL_SONNET = "claude-sonnet-4-6"
+MODEL_HAIKU = "claude-haiku-4-5-20251001"
 
 _STYLE_MAP = {
     "gentle": (
@@ -24,6 +28,23 @@ _STYLE_MAP = {
     ),
 }
 
+# Маркеры сложных вопросов — нужен Sonnet
+_COMPLEX_PATTERNS = [
+    # Кризисные ситуации
+    r"истерик|скандал|орёт|кричит|бьёт|дерётся|агресси|нен[ао]вижу",
+    # Медицинские/психологические темы
+    r"аутизм|сдвг|adhd|задержк[аи] развит|логопед|невролог|психолог|диагноз|отклонен",
+    # Сложные семейные ситуации
+    r"развод|разлук|измен|абьюз|насили|алкогол|зависимост|депресс|тревожн|суицид",
+    # Подростковые проблемы
+    r"наркотик|курит|пьёт|секс|порно|буллинг|травл|самоповрежд",
+    # Партнёрские конфликты о воспитании
+    r"муж не согласен|жена не понимает|свекров|тёщ|конфликт.*воспитан",
+    # Длинные развёрнутые вопросы (>200 символов обычно сложнее)
+    # Обрабатывается отдельно в функции
+]
+_COMPLEX_RE = re.compile("|".join(_COMPLEX_PATTERNS), re.IGNORECASE)
+
 
 def init_claude(api_key: str):
     global _client
@@ -41,7 +62,29 @@ def _resolve_style(value: str) -> str:
         return ""
     if value in _STYLE_MAP:
         return _STYLE_MAP[value]
-    return value  # пользовательский текст
+    return value
+
+
+def _choose_model(user_message: str, kb_chunks: str, brave_results: str) -> str:
+    """Роутинг: сложные вопросы → Sonnet, простые → Haiku."""
+    # Сложный вопрос по содержанию
+    if _COMPLEX_RE.search(user_message):
+        return MODEL_SONNET
+
+    # Длинный вопрос (>200 символов) — скорее всего сложная ситуация
+    if len(user_message) > 200:
+        return MODEL_SONNET
+
+    # Если есть интернет-источники — нужен анализ достоверности
+    if brave_results:
+        return MODEL_SONNET
+
+    # Много контекста из книг — нужен хороший синтез
+    if kb_chunks and len(kb_chunks) > 5000:
+        return MODEL_SONNET
+
+    # Всё остальное — Haiku справится
+    return MODEL_HAIKU
 
 
 def _build_system_prompt(
@@ -76,7 +119,6 @@ def _build_system_prompt(
         ),
     }.get(role, "")
 
-    # Стиль для пользователя (как бот общается С НИМ)
     my_style_resolved = _resolve_style(my_style)
     my_style_block = ""
     if my_style_resolved:
@@ -85,7 +127,6 @@ def _build_system_prompt(
             f"{my_style_resolved}\n"
         )
 
-    # Стиль для партнёра (как советовать общаться с партнёром)
     partner_style_resolved = _resolve_style(partner_style)
     partner_style_block = ""
     if partner_style_resolved:
@@ -158,14 +199,18 @@ async def ask_claude(
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": user_message})
 
+    # Роутинг модели
+    model = _choose_model(user_message, kb_chunks, brave_results)
+    logger.info("Роутинг: model={} для запроса '{}'", model.split("-")[1], user_message[:50])
+
     try:
         response = await client.messages.create(
-            model=config.claude_model,
+            model=model,
             max_tokens=2048,
             system=system_prompt,
             messages=messages,
         )
         return response.content[0].text
     except Exception as e:
-        logger.error("Ошибка Claude API: {}", e)
+        logger.error("Ошибка Claude API ({}): {}", model, e)
         raise

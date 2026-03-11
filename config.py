@@ -18,6 +18,7 @@ class Config:
     db_path: str
     chroma_dir: str
     claude_model: str
+    claude_model_light: str
     max_history_messages: int
     log_level: str
 
@@ -41,7 +42,6 @@ def load_config() -> Config:
     bot_token = os.getenv("BOT_TOKEN", "")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
 
-    # Fail-fast: без критичных ключей бот не запустится
     missing = []
     if not bot_token:
         missing.append("BOT_TOKEN")
@@ -64,6 +64,7 @@ def load_config() -> Config:
         db_path=os.getenv("DB_PATH", "db/parentbot.db"),
         chroma_dir=os.getenv("CHROMA_DIR", "data/chroma"),
         claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+        claude_model_light=os.getenv("CLAUDE_MODEL_LIGHT", "claude-haiku-4-5-20251001"),
         max_history_messages=int(os.getenv("MAX_HISTORY_MESSAGES", "20")),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
     )
