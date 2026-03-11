@@ -11,7 +11,6 @@ class UploadPDF(StatesGroup):
 
 
 class EditProfile(StatesGroup):
-    waiting_field = State()
     waiting_value = State()
 
 
