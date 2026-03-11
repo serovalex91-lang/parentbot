@@ -7,9 +7,11 @@ import dateutil.parser
 @dataclass
 class AgeResult:
     months: int
+    days_total: int
     years: int
     remaining_months: int
-    display: str      # "1 год 4 месяца"
+    remaining_days: int
+    display: str      # "1 год 4 месяца" или "15 дней"
     context: str      # "период активного освоения речи"
 
 
@@ -24,31 +26,52 @@ def calculate_age(birthdate_str: str) -> Optional[AgeResult]:
     if birth > today:
         return None
 
+    # Точный расчёт в днях
+    days_total = (today - birth).days
+
+    # Расчёт в месяцах с учётом дня
     months_total = (today.year - birth.year) * 12 + (today.month - birth.month)
     if today.day < birth.day:
         months_total -= 1
     months_total = max(0, months_total)
 
+    # Оставшиеся дни после полных месяцев
+    if months_total > 0:
+        # Дата начала текущего неполного месяца
+        m = birth.month + months_total
+        y = birth.year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        try:
+            last_month_date = date(y, m, birth.day)
+        except ValueError:
+            # Если день не существует (например 31 в коротком месяце)
+            import calendar
+            last_day = calendar.monthrange(y, m)[1]
+            last_month_date = date(y, m, min(birth.day, last_day))
+        remaining_days = (today - last_month_date).days
+    else:
+        remaining_days = days_total
+
     years = months_total // 12
     remaining_months = months_total % 12
 
-    display = _format_age(years, remaining_months)
+    display = _format_age(years, remaining_months, remaining_days, days_total)
     context = _age_context(months_total)
 
     return AgeResult(
         months=months_total,
+        days_total=days_total,
         years=years,
         remaining_months=remaining_months,
+        remaining_days=remaining_days,
         display=display,
         context=context,
     )
 
 
 def parse_birthdate(text: str) -> Optional[str]:
-    """Распарсить дату рождения из текста пользователя → ISO формат YYYY-MM-DD.
-    Валидирует: дата в прошлом, возраст 0–18 лет."""
+    """Распарсить дату рождения из текста пользователя → ISO формат YYYY-MM-DD."""
     text = text.strip().replace(".", "-").replace("/", "-")
-    # Попытаться стандартные форматы
     for fmt in ["%d-%m-%Y", "%Y-%m-%d", "%d-%m-%y"]:
         try:
             from datetime import datetime
@@ -56,7 +79,6 @@ def parse_birthdate(text: str) -> Optional[str]:
             return _validate_birthdate(dt)
         except ValueError:
             continue
-    # dateutil как fallback
     try:
         dt = dateutil.parser.parse(text, dayfirst=True).date()
         return _validate_birthdate(dt)
@@ -68,19 +90,33 @@ def _validate_birthdate(dt: date) -> Optional[str]:
     today = date.today()
     if dt > today:
         return None
-    months_total = (today.year - dt.year) * 12 + (today.month - dt.month)
-    if months_total < 0 or months_total > 18 * 12:
+    # Проверяем возраст 0-18 лет по дням (точнее чем по месяцам)
+    days = (today - dt).days
+    if days < 0 or days > 18 * 365 + 5:  # +5 на високосные
         return None
     return dt.isoformat()
 
 
-def _format_age(years: int, months: int) -> str:
+def _format_age(years: int, months: int, days: int, total_days: int) -> str:
+    # Менее месяца — показываем дни
+    if years == 0 and months == 0:
+        if total_days == 0:
+            return "новорождённый"
+        if total_days == 1:
+            return "1 день"
+        return f"{total_days} {_plural(total_days, 'день', 'дня', 'дней')}"
+
     parts = []
     if years > 0:
         parts.append(f"{years} {_plural(years, 'год', 'года', 'лет')}")
-    if months > 0 or years == 0:
+    if months > 0:
         parts.append(f"{months} {_plural(months, 'месяц', 'месяца', 'месяцев')}")
-    return " ".join(parts) if parts else "0 месяцев"
+
+    # Для детей до 3 месяцев — показываем и дни
+    if years == 0 and months < 3 and days > 0:
+        parts.append(f"{days} {_plural(days, 'день', 'дня', 'дней')}")
+
+    return " ".join(parts) if parts else "новорождённый"
 
 
 def _plural(n: int, one: str, few: str, many: str) -> str:
@@ -97,6 +133,8 @@ def _plural(n: int, one: str, few: str, many: str) -> str:
 
 def _age_context(months: int) -> str:
     """Краткое описание этапа развития для промта."""
+    if months < 1:
+        return "период новорождённости — адаптация к внешнему миру"
     if months < 3:
         return "период новорождённости — сенсорное освоение мира"
     if months < 6:
@@ -119,4 +157,6 @@ def _age_context(months: int) -> str:
         return "период подготовки к школе"
     if months < 96:
         return "младший школьный возраст"
-    return "школьный возраст"
+    if months < 144:
+        return "подростковый возраст — формирование идентичности"
+    return "старший подростковый возраст — сепарация и самоопределение"

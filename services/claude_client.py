@@ -1,4 +1,3 @@
-import json
 from typing import List, Dict, Optional
 import anthropic
 from loguru import logger
@@ -26,6 +25,7 @@ def _build_system_prompt(
     kb_chunks: str,
     child_context: str = "",
     brave_results: str = "",
+    parenting_style: str = "",
 ) -> str:
     role_map = {
         "papa": "папе",
@@ -48,6 +48,32 @@ def _build_system_prompt(
             "учитывая разные стили и потребности обоих партнёров."
         ),
     }.get(role, "")
+
+    # Пользовательский стиль общения (перекрывает дефолтный)
+    style_block = ""
+    if parenting_style:
+        style_map = {
+            "gentle": (
+                "СТИЛЬ ОБЩЕНИЯ: максимально мягкий, с сопереживанием и поддержкой. "
+                "Никаких назиданий. Фокус на эмоциях родителя, валидация чувств. "
+                "«Я понимаю, как тебе сейчас трудно...» Тёплый, безоценочный тон."
+            ),
+            "balanced": (
+                "СТИЛЬ ОБЩЕНИЯ: сбалансированный — поддержка + конкретика. "
+                "Сначала валидация чувств, потом практический совет. "
+                "Дружелюбный, но информативный тон."
+            ),
+            "structured": (
+                "СТИЛЬ ОБЩЕНИЯ: чёткий, структурированный, с акцентом на границах. "
+                "Конкретные шаги, ясные формулировки. Меньше эмоций, больше стратегии. "
+                "«Вот что можно сделать: 1, 2, 3.»"
+            ),
+        }
+        if parenting_style in style_map:
+            style_block = f"\n{style_map[parenting_style]}\n"
+        else:
+            # Пользовательский свободный текст
+            style_block = f"\nСТИЛЬ ОБЩЕНИЯ (задан родителем): {parenting_style}\n"
 
     child_context_block = ""
     if child_context:
@@ -72,7 +98,7 @@ def _build_system_prompt(
 Текущий возраст ребёнка: {age_display} — {age_context}.
 {child_context_block}
 {role_instructions}
-
+{style_block}
 Жёсткие ограничения:
 - Отвечай ТОЛЬКО на русском языке.
 - Запрет на физические наказания, крики, стыжение, манипуляции.
@@ -94,6 +120,7 @@ async def ask_claude(
     user_message: str,
     child_context: str = "",
     brave_results: str = "",
+    parenting_style: str = "",
 ) -> str:
     client = get_client()
 
@@ -104,9 +131,9 @@ async def ask_claude(
         kb_chunks=kb_chunks,
         child_context=child_context,
         brave_results=brave_results,
+        parenting_style=parenting_style,
     )
 
-    # Собрать messages из истории + текущий вопрос
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": user_message})
 

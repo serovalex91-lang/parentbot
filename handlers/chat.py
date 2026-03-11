@@ -14,6 +14,16 @@ import asyncio
 
 router = Router()
 
+def _get_gender(db_user: dict) -> str:
+    if not db_user or not db_user.get("child_context"):
+        return ""
+    try:
+        ctx = json.loads(db_user["child_context"])
+        return ctx.get("child_gender", "")
+    except Exception:
+        return ""
+
+
 
 async def _get_child_context_str(db_user: dict) -> str:
     if not db_user or not db_user.get("child_context"):
@@ -49,7 +59,7 @@ async def toggle_search_mode(message: Message, db_user: dict = None):
     mode_name = "🌐 Книги + интернет" if new_mode == "kb_internet" else "📚 Только из книг"
     await message.answer(
         f"✅ Режим поиска изменён: <b>{mode_name}</b>",
-        reply_markup=main_menu(new_mode),
+        reply_markup=main_menu(new_mode, _get_gender(db_user)),
     )
 
 

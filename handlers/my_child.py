@@ -1,3 +1,4 @@
+import json
 from aiogram import Router, F, Bot
 from aiogram.types import Message
 from loguru import logger
@@ -12,7 +13,7 @@ import db.queries as db
 router = Router()
 
 
-@router.message(F.text == "👶 Расскажи о дочке")
+@router.message(F.text.startswith("👶 Расскажи о"))
 async def my_child_handler(message: Message, bot: Bot, config: Config = None, db_user: dict = None):
     if not db_user:
         await message.answer("Сначала пройди настройку через /start")
@@ -36,9 +37,8 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
     user_id = message.from_user.id
     excluded_ids = await db.get_excluded_book_ids(user_id)
 
-    # Запрос к KB с фильтром по возрасту
     query = f"Развитие ребёнка в {age.display}: ключевые этапы, потребности, советы родителям"
-    chunks = search_kb(
+    chunks = await search_kb(
         user_id=user_id,
         query=query,
         age_months=age.months,
@@ -55,11 +55,9 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
 
     kb_text = format_chunks_for_prompt(chunks)
 
-    # Персональный контекст ребёнка
     child_context = ""
     if db_user.get("child_context"):
         try:
-            import json
             ctx = json.loads(db_user["child_context"])
             parts = []
             if ctx.get("child_name"):
@@ -81,6 +79,14 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
     )
 
     role = db_user.get("role", "both")
+    parenting_style = ""
+    if db_user.get("child_context"):
+        try:
+            ctx = json.loads(db_user["child_context"])
+            parenting_style = ctx.get("parenting_style", "")
+        except Exception:
+            pass
+
     history = await db.get_last_messages(user_id, limit=config.max_history_messages if config else 20)
 
     try:
@@ -93,6 +99,7 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
             history=history,
             user_message=user_prompt,
             child_context=child_context,
+            parenting_style=parenting_style,
         )
     except Exception as e:
         logger.error("Ошибка Claude в my_child: {}", e)
