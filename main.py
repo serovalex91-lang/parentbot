@@ -32,6 +32,8 @@ async def main():
     os.makedirs("logs", exist_ok=True)
 
     # Инициализировать БД
+    import db.queries as db_queries
+    db_queries.set_db_path(config.db_path)
     await init_db(config.db_path, config.admin_telegram_id, config.whitelist_ids)
 
     # Инициализировать ChromaDB и Claude
