@@ -1,0 +1,15 @@
+[Unit]
+Description=ParentBot Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/brain/projects/parentbot
+ExecStart=/home/brain/projects/parentbot/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

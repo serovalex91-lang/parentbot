@@ -1,0 +1,19 @@
+from aiogram.fsm.state import State, StatesGroup
+
+
+class Onboarding(StatesGroup):
+    waiting_role = State()
+    waiting_birthdate = State()
+
+
+class UploadPDF(StatesGroup):
+    waiting_age_range = State()
+
+
+class EditProfile(StatesGroup):
+    waiting_field = State()
+    waiting_value = State()
+
+
+class SetDate(StatesGroup):
+    waiting_birthdate = State()
