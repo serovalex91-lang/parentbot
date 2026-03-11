@@ -15,6 +15,7 @@ from kb.chroma_client import init_chroma
 from kb.embedder import warmup as warmup_embedder
 from services.claude_client import init_claude
 from services.scheduler import start_scheduler, stop_scheduler
+from services.brave_search import close_brave_session
 import db.queries as db_queries
 
 
@@ -68,6 +69,7 @@ async def main():
 
     async def on_shutdown():
         stop_scheduler()
+        await close_brave_session()
         await db_queries.close_db()
 
     dp.startup.register(on_startup)
