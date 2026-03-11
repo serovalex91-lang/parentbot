@@ -65,16 +65,17 @@ CREATE TABLE IF NOT EXISTS age_notifications (
 
 async def init_db(db_path: str, admin_id: int, whitelist_ids: List[int]):
     async with aiosqlite.connect(db_path) as db:
+        # WAL mode для лучшей конкурентности
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript(SCHEMA)
 
-        # Добавить whitelist из .env если ещё нет
         for tg_id in whitelist_ids:
             await db.execute(
                 "INSERT OR IGNORE INTO whitelist (telegram_id, added_by) VALUES (?, ?)",
                 (tg_id, admin_id),
             )
 
-        # Сделать admin пользователя (если уже есть в users)
         if admin_id:
             await db.execute(
                 "UPDATE users SET is_admin = 1 WHERE id = ?",
