@@ -9,7 +9,7 @@ _scheduler: AsyncIOScheduler = None
 
 
 async def _check_age_notifications(bot: Bot):
-    """Ежедневная проверка: нужно ли отправить уведомление о возрасте."""
+    """Ежедневная проверка: уведомить если ребёнок скоро выйдет из возрастного диапазона книги."""
     users = await db.get_all_active_users()
     books = await db.get_shared_books()
 
@@ -22,10 +22,16 @@ async def _check_age_notifications(bot: Bot):
             continue
 
         for book in books:
+            age_min = book.get("age_range_min", 0)
             age_max = book.get("age_range_max", 0)
-            # Уведомить если осталось меньше 60 месяцев ДО выхода из диапазона
+
+            # Книга релевантна только если ребёнок В диапазоне
+            if not (age_min <= age.months <= age_max):
+                continue
+
+            # Уведомить если осталось 1-3 месяца до выхода из диапазона
             months_left = age_max - age.months
-            if 0 <= months_left <= 60:
+            if 1 <= months_left <= 3:
                 already_sent = await db.was_notification_sent(user["id"], book["id"])
                 if not already_sent:
                     try:
@@ -34,7 +40,7 @@ async def _check_age_notifications(bot: Bot):
                             f"📚 <b>Напоминание о книге</b>\n\n"
                             f"Книга «{book['original_name']}» актуальна ещё примерно "
                             f"{months_left} мес. для вашего ребёнка ({age.display}).\n\n"
-                            "Успей прочитать или задай вопросы по ней! 📖"
+                            "Успей прочитать или задай вопросы по ней!"
                         )
                         await db.mark_notification_sent(user["id"], book["id"])
                         logger.info(

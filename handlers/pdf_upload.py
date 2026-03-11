@@ -162,7 +162,8 @@ async def process_age_range(
 
     # Создать эмбеддинги
     try:
-        embeddings = embed_texts(chunks)
+        import asyncio
+        embeddings = await asyncio.to_thread(embed_texts, chunks)
     except Exception as e:
         logger.error("Ошибка эмбеддингов: {}", e)
         await callback.message.edit_text("❌ Ошибка при создании эмбеддингов.")
@@ -181,7 +182,8 @@ async def process_age_range(
 
     # Добавить в ChromaDB
     try:
-        chunk_ids = add_chunks(
+        chunk_ids = await asyncio.to_thread(
+            add_chunks,
             scope=scope,
             user_id=owner_id,
             chunks=chunks,
