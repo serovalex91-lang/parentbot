@@ -9,7 +9,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def main_menu(search_mode: str = "kb_only", child_gender: str = "") -> ReplyKeyboardMarkup:
     mode_label = "📚 Только из книг ✓" if search_mode == "kb_only" else "🌐 Книги + интернет ✓"
-    # Кнопка адаптирована под пол ребёнка
     gender_labels = {"boy": "👶 Расскажи о сыночке", "girl": "👶 Расскажи о дочке"}
     child_btn = gender_labels.get(child_gender, "👶 Расскажи о ребёнке")
     return ReplyKeyboardMarkup(
@@ -94,7 +93,8 @@ def profile_keyboard() -> InlineKeyboardMarkup:
         ("🌟 Характер", "child_character"),
         ("📝 Заметки", "child_notes"),
         ("📅 Дата рождения", "child_birthdate"),
-        ("🎨 Стиль общения", "parenting_style"),
+        ("🎨 Стиль для меня", "my_style"),
+        ("💬 Стиль для партнёра", "partner_style"),
     ]
     for label, field in fields:
         builder.button(text=f"{label} [изменить]", callback_data=f"profile_edit:{field}")
@@ -110,13 +110,14 @@ def gender_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def parenting_style_keyboard() -> InlineKeyboardMarkup:
+def style_keyboard(target: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора стиля. target = 'my' или 'partner'."""
     builder = InlineKeyboardBuilder()
     styles = [
-        ("🤗 Мягкий, с сопереживанием", "style:gentle"),
-        ("⚖️ Сбалансированный", "style:balanced"),
-        ("📏 Чёткий, с границами", "style:structured"),
-        ("✏️ Свой вариант", "style:custom"),
+        ("🤗 Мягкий, с сопереживанием", f"style:{target}:gentle"),
+        ("⚖️ Сбалансированный", f"style:{target}:balanced"),
+        ("📏 Чёткий, с границами", f"style:{target}:structured"),
+        ("✏️ Свой вариант", f"style:{target}:custom"),
     ]
     for label, data in styles:
         builder.button(text=label, callback_data=data)

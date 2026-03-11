@@ -6,6 +6,24 @@ from config import Config
 
 _client: Optional[anthropic.AsyncAnthropic] = None
 
+_STYLE_MAP = {
+    "gentle": (
+        "Максимально мягко, с сопереживанием и поддержкой. "
+        "Никаких назиданий. Валидация чувств. "
+        "«Я понимаю, как тебе сейчас трудно...» Тёплый, безоценочный тон."
+    ),
+    "balanced": (
+        "Сбалансированно — поддержка + конкретика. "
+        "Сначала валидация чувств, потом практический совет. "
+        "Дружелюбный, но информативный тон."
+    ),
+    "structured": (
+        "Чётко, структурированно, с акцентом на границах. "
+        "Конкретные шаги, ясные формулировки. Меньше эмоций, больше стратегии. "
+        "«Вот что можно сделать: 1, 2, 3.»"
+    ),
+}
+
 
 def init_claude(api_key: str):
     global _client
@@ -18,6 +36,14 @@ def get_client() -> anthropic.AsyncAnthropic:
     return _client
 
 
+def _resolve_style(value: str) -> str:
+    if not value:
+        return ""
+    if value in _STYLE_MAP:
+        return _STYLE_MAP[value]
+    return value  # пользовательский текст
+
+
 def _build_system_prompt(
     role: str,
     age_display: str,
@@ -25,7 +51,8 @@ def _build_system_prompt(
     kb_chunks: str,
     child_context: str = "",
     brave_results: str = "",
-    parenting_style: str = "",
+    my_style: str = "",
+    partner_style: str = "",
 ) -> str:
     role_map = {
         "papa": "папе",
@@ -36,11 +63,11 @@ def _build_system_prompt(
 
     role_instructions = {
         "papa": (
-            "Стиль общения: аналитический, поддерживающий, чёткий. "
+            "Базовый стиль: аналитический, поддерживающий, чёткий. "
             "Фокус на концепции «надёжной базы», активных играх, установлении здоровых границ."
         ),
         "mama": (
-            "Стиль общения: тёплый, эмпатичный. "
+            "Базовый стиль: тёплый, эмпатичный. "
             "Акцент на самоподдержке, профилактике эмоционального выгорания."
         ),
         "both": (
@@ -49,31 +76,23 @@ def _build_system_prompt(
         ),
     }.get(role, "")
 
-    # Пользовательский стиль общения (перекрывает дефолтный)
-    style_block = ""
-    if parenting_style:
-        style_map = {
-            "gentle": (
-                "СТИЛЬ ОБЩЕНИЯ: максимально мягкий, с сопереживанием и поддержкой. "
-                "Никаких назиданий. Фокус на эмоциях родителя, валидация чувств. "
-                "«Я понимаю, как тебе сейчас трудно...» Тёплый, безоценочный тон."
-            ),
-            "balanced": (
-                "СТИЛЬ ОБЩЕНИЯ: сбалансированный — поддержка + конкретика. "
-                "Сначала валидация чувств, потом практический совет. "
-                "Дружелюбный, но информативный тон."
-            ),
-            "structured": (
-                "СТИЛЬ ОБЩЕНИЯ: чёткий, структурированный, с акцентом на границах. "
-                "Конкретные шаги, ясные формулировки. Меньше эмоций, больше стратегии. "
-                "«Вот что можно сделать: 1, 2, 3.»"
-            ),
-        }
-        if parenting_style in style_map:
-            style_block = f"\n{style_map[parenting_style]}\n"
-        else:
-            # Пользовательский свободный текст
-            style_block = f"\nСТИЛЬ ОБЩЕНИЯ (задан родителем): {parenting_style}\n"
+    # Стиль для пользователя (как бот общается С НИМ)
+    my_style_resolved = _resolve_style(my_style)
+    my_style_block = ""
+    if my_style_resolved:
+        my_style_block = (
+            f"\nСТИЛЬ ОБЩЕНИЯ С РОДИТЕЛЕМ (как ты говоришь с ним/ней): "
+            f"{my_style_resolved}\n"
+        )
+
+    # Стиль для партнёра (как советовать общаться с партнёром)
+    partner_style_resolved = _resolve_style(partner_style)
+    partner_style_block = ""
+    if partner_style_resolved:
+        partner_style_block = (
+            f"\nСТИЛЬ СОВЕТОВ ПРО ПАРТНЁРА (когда речь о втором родителе/партнёре): "
+            f"{partner_style_resolved}\n"
+        )
 
     child_context_block = ""
     if child_context:
@@ -98,7 +117,7 @@ def _build_system_prompt(
 Текущий возраст ребёнка: {age_display} — {age_context}.
 {child_context_block}
 {role_instructions}
-{style_block}
+{my_style_block}{partner_style_block}
 Жёсткие ограничения:
 - Отвечай ТОЛЬКО на русском языке.
 - Запрет на физические наказания, крики, стыжение, манипуляции.
@@ -120,7 +139,8 @@ async def ask_claude(
     user_message: str,
     child_context: str = "",
     brave_results: str = "",
-    parenting_style: str = "",
+    my_style: str = "",
+    partner_style: str = "",
 ) -> str:
     client = get_client()
 
@@ -131,7 +151,8 @@ async def ask_claude(
         kb_chunks=kb_chunks,
         child_context=child_context,
         brave_results=brave_results,
-        parenting_style=parenting_style,
+        my_style=my_style,
+        partner_style=partner_style,
     )
 
     messages = [{"role": m["role"], "content": m["content"]} for m in history]

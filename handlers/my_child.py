@@ -79,11 +79,13 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
     )
 
     role = db_user.get("role", "both")
-    parenting_style = ""
+    my_style = ""
+    partner_style = ""
     if db_user.get("child_context"):
         try:
             ctx = json.loads(db_user["child_context"])
-            parenting_style = ctx.get("parenting_style", "")
+            my_style = ctx.get("my_style", "")
+            partner_style = ctx.get("partner_style", "")
         except Exception:
             pass
 
@@ -99,7 +101,8 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
             history=history,
             user_message=user_prompt,
             child_context=child_context,
-            parenting_style=parenting_style,
+            my_style=my_style,
+            partner_style=partner_style,
         )
     except Exception as e:
         logger.error("Ошибка Claude в my_child: {}", e)

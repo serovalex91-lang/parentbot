@@ -7,15 +7,20 @@ from loguru import logger
 
 from config import Config
 from states.fsm import Onboarding, SetDate, EditProfile
-from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, parenting_style_keyboard
+from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
 import db.queries as db
 
 router = Router()
 
+STYLE_NAMES = {
+    "gentle": "🤗 Мягкий, с сопереживанием",
+    "balanced": "⚖️ Сбалансированный",
+    "structured": "📏 Чёткий, с границами",
+}
+
 
 def _get_child_gender(db_user: dict) -> str:
-    """Получить пол ребёнка из child_context."""
     if not db_user or not db_user.get("child_context"):
         return ""
     try:
@@ -23,6 +28,15 @@ def _get_child_gender(db_user: dict) -> str:
         return ctx.get("child_gender", "")
     except Exception:
         return ""
+
+
+def _get_context(db_user: dict) -> dict:
+    if not db_user or not db_user.get("child_context"):
+        return {}
+    try:
+        return json.loads(db_user["child_context"])
+    except Exception:
+        return {}
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
@@ -42,7 +56,6 @@ async def cmd_start(message: Message, state: FSMContext, config: Config = None):
 
     await db.upsert_user(user.id, user.username or "", user.full_name or "")
 
-    # Назначить права администратора через db.queries (без raw SQL)
     if config and user.id == config.admin_telegram_id:
         _db = await db.get_db()
         await _db.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user.id,))
@@ -163,12 +176,7 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
         await message.answer("Сначала пройди настройку через /start")
         return
 
-    context = {}
-    if db_user.get("child_context"):
-        try:
-            context = json.loads(db_user["child_context"])
-        except Exception:
-            pass
+    context = _get_context(db_user)
 
     birthdate = db_user.get("child_birthdate", "")
     age = calculate_age(birthdate) if birthdate else None
@@ -180,18 +188,23 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
     gender_map = {"boy": "👦 Мальчик", "girl": "👧 Девочка"}
     gender_text = gender_map.get(context.get("child_gender", ""), "—")
 
-    style_map = {
-        "gentle": "🤗 Мягкий, с сопереживанием",
-        "balanced": "⚖️ Сбалансированный",
-        "structured": "📏 Чёткий, с границами",
-    }
-    style = context.get("parenting_style", "")
-    if style in style_map:
-        style_text = style_map[style]
-    elif style:
-        style_text = f"✏️ {style}"
+    # Стиль для меня
+    my_style = context.get("my_style", "")
+    if my_style in STYLE_NAMES:
+        my_style_text = STYLE_NAMES[my_style]
+    elif my_style:
+        my_style_text = f"✏️ {my_style}"
     else:
-        style_text = "—"
+        my_style_text = "—"
+
+    # Стиль для партнёра
+    partner_style = context.get("partner_style", "")
+    if partner_style in STYLE_NAMES:
+        partner_style_text = STYLE_NAMES[partner_style]
+    elif partner_style:
+        partner_style_text = f"✏️ {partner_style}"
+    else:
+        partner_style_text = "—"
 
     text = (
         "<b>👤 Мой профиль</b>\n\n"
@@ -201,8 +214,9 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
         f"👶 Имя: {context.get('child_name', '—')}\n"
         f"⚠️ Особенности: {context.get('child_features', '—')}\n"
         f"🌟 Характер: {context.get('child_character', '—')}\n"
-        f"📝 Заметки: {context.get('child_notes', '—')}\n"
-        f"🎨 Стиль общения: {style_text}\n\n"
+        f"📝 Заметки: {context.get('child_notes', '—')}\n\n"
+        f"🎨 Стиль для меня: {my_style_text}\n"
+        f"💬 Стиль для партнёра: {partner_style_text}\n\n"
         "<i>Нажми кнопку чтобы изменить поле:</i>"
     )
     await message.answer(text, reply_markup=profile_keyboard())
@@ -214,10 +228,7 @@ async def profile_edit_start(callback: CallbackQuery, state: FSMContext):
 
     if field == "role":
         await state.set_state(Onboarding.waiting_role)
-        await callback.message.answer(
-            "👤 Выбери новую роль:",
-            reply_markup=role_keyboard(),
-        )
+        await callback.message.answer("👤 Выбери новую роль:", reply_markup=role_keyboard())
         await callback.answer()
         return
 
@@ -229,17 +240,25 @@ async def profile_edit_start(callback: CallbackQuery, state: FSMContext):
     if field == "child_birthdate":
         await state.set_state(SetDate.waiting_birthdate)
         await callback.message.answer(
-            "📅 Введи новую дату рождения ребёнка.\n"
-            "Формат: <b>20.11.2024</b>"
+            "📅 Введи новую дату рождения ребёнка.\nФормат: <b>20.11.2024</b>"
         )
         await callback.answer()
         return
 
-    if field == "parenting_style":
+    if field == "my_style":
         await callback.message.answer(
-            "🎨 Выбери стиль общения бота:\n\n"
-            "Это повлияет на <b>тон и подход</b> в ответах.",
-            reply_markup=parenting_style_keyboard(),
+            "🎨 <b>Стиль для меня</b>\n\n"
+            "Как бот должен общаться <b>с тобой</b>?",
+            reply_markup=style_keyboard("my"),
+        )
+        await callback.answer()
+        return
+
+    if field == "partner_style":
+        await callback.message.answer(
+            "💬 <b>Стиль для партнёра</b>\n\n"
+            "Как бот должен советовать <b>общаться с партнёром</b>?",
+            reply_markup=style_keyboard("partner"),
         )
         await callback.answer()
         return
@@ -261,33 +280,35 @@ async def profile_edit_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("style:"))
 async def process_style(callback: CallbackQuery, state: FSMContext, db_user: dict = None):
-    style = callback.data.split(":")[1]
-    style_names = {
-        "gentle": "🤗 Мягкий, с сопереживанием",
-        "balanced": "⚖️ Сбалансированный",
-        "structured": "📏 Чёткий, с границами",
-    }
+    # style:my:gentle или style:partner:custom
+    parts = callback.data.split(":")
+    target = parts[1]   # "my" или "partner"
+    value = parts[2]    # "gentle", "balanced", "structured", "custom"
 
-    if style == "custom":
+    field = "my_style" if target == "my" else "partner_style"
+    label = "Стиль для меня" if target == "my" else "Стиль для партнёра"
+
+    if value == "custom":
         await state.set_state(EditProfile.waiting_value)
-        await state.update_data(field="parenting_style")
-        await callback.message.answer(
-            "✏️ Опиши желаемый стиль общения своими словами.\n"
-            "Например: <i>«больше сопереживания, поддержки, без назиданий»</i>"
-        )
+        await state.update_data(field=field)
+        if target == "my":
+            await callback.message.answer(
+                "✏️ Опиши как бот должен общаться <b>с тобой</b>.\n"
+                "Например: <i>«чётко, по шагам, без воды, как коуч»</i>"
+            )
+        else:
+            await callback.message.answer(
+                "✏️ Опиши как бот должен советовать <b>общаться с партнёром</b>.\n"
+                "Например: <i>«мягко, с сопереживанием, без назиданий»</i>"
+            )
         await callback.answer()
         return
 
-    context = {}
-    if db_user and db_user.get("child_context"):
-        try:
-            context = json.loads(db_user["child_context"])
-        except Exception:
-            pass
-    context["parenting_style"] = style
+    context = _get_context(db_user)
+    context[field] = value
     await db.set_child_context(callback.from_user.id, context)
     await callback.message.edit_text(
-        f"✅ Стиль общения: <b>{style_names.get(style, style)}</b>"
+        f"✅ {label}: <b>{STYLE_NAMES.get(value, value)}</b>"
     )
     await callback.answer()
 
@@ -298,12 +319,7 @@ async def profile_edit_save(message: Message, state: FSMContext, db_user: dict =
     field = data.get("field")
     value = message.text.strip() if message.text else ""
 
-    context = {}
-    if db_user and db_user.get("child_context"):
-        try:
-            context = json.loads(db_user["child_context"])
-        except Exception:
-            pass
+    context = _get_context(db_user)
 
     if value == "-":
         context.pop(field, None)
@@ -319,12 +335,7 @@ async def profile_edit_save(message: Message, state: FSMContext, db_user: dict =
 async def process_gender(callback: CallbackQuery, db_user: dict = None):
     gender = callback.data.split(":")[1]
     gender_names = {"boy": "👦 Мальчик", "girl": "👧 Девочка"}
-    context = {}
-    if db_user and db_user.get("child_context"):
-        try:
-            context = json.loads(db_user["child_context"])
-        except Exception:
-            pass
+    context = _get_context(db_user)
     context["child_gender"] = gender
     await db.set_child_context(callback.from_user.id, context)
     await callback.message.edit_text(f"✅ Пол ребёнка: <b>{gender_names.get(gender, gender)}</b>")

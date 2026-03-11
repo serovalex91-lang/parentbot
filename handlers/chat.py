@@ -142,11 +142,13 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
     validated_history = _validate_history(history)
 
     role = db_user.get("role", "both")
-    parenting_style = ""
+    my_style = ""
+    partner_style = ""
     if db_user.get("child_context"):
         try:
             ctx = json.loads(db_user["child_context"])
-            parenting_style = ctx.get("parenting_style", "")
+            my_style = ctx.get("my_style", "")
+            partner_style = ctx.get("partner_style", "")
         except Exception:
             pass
 
@@ -162,7 +164,8 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
             user_message=user_text,
             child_context=child_context,
             brave_results=brave_text,
-            parenting_style=parenting_style,
+            my_style=my_style,
+            partner_style=partner_style,
         )
     except Exception as e:
         logger.error("Ошибка Claude API для user={}: {}", user_id, e)
