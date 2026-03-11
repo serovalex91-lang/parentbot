@@ -15,6 +15,7 @@ from kb.chroma_client import init_chroma
 from kb.embedder import warmup as warmup_embedder
 from services.claude_client import init_claude
 from services.scheduler import start_scheduler, stop_scheduler
+import db.queries as db_queries
 
 
 async def main():
@@ -33,14 +34,15 @@ async def main():
     os.makedirs("logs", exist_ok=True)
 
     # Инициализировать БД
-    import db.queries as db_queries
     db_queries.set_db_path(config.db_path)
     await init_db(config.db_path, config.admin_telegram_id, config.whitelist_ids)
 
     # Инициализировать ChromaDB и Claude
     init_chroma(config.chroma_dir)
     init_claude(config.anthropic_api_key)
-    warmup_embedder()  # предзагрузить модель эмбеддингов
+
+    # Предзагрузить модель эмбеддингов в отдельном потоке (не блокируя старт)
+    await asyncio.to_thread(warmup_embedder)
 
     bot = Bot(
         token=config.bot_token,
@@ -60,12 +62,13 @@ async def main():
     dp.include_router(my_child.router)
     dp.include_router(chat.router)
 
-    # Планировщик — запускать через startup hook
+    # Планировщик
     async def on_startup():
         start_scheduler(bot)
 
     async def on_shutdown():
         stop_scheduler()
+        await db_queries.close_db()
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

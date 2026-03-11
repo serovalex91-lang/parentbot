@@ -2,8 +2,9 @@ import json
 from typing import Optional, List, Dict, Any
 import aiosqlite
 
-# Глобальный путь к БД — устанавливается при старте
+# Глобальный путь к БД и пул соединений
 _db_path: str = ""
+_connection: Optional[aiosqlite.Connection] = None
 
 
 def set_db_path(path: str):
@@ -15,133 +16,159 @@ def get_db_path() -> str:
     return _db_path
 
 
+async def get_db() -> aiosqlite.Connection:
+    """Возвращает общее соединение (с WAL mode)."""
+    global _connection
+    if _connection is None:
+        _connection = await aiosqlite.connect(_db_path)
+        await _connection.execute("PRAGMA journal_mode=WAL")
+        await _connection.execute("PRAGMA busy_timeout=5000")
+        _connection.row_factory = aiosqlite.Row
+    return _connection
+
+
+async def close_db():
+    """Закрыть общее соединение при shutdown."""
+    global _connection
+    if _connection:
+        await _connection.close()
+        _connection = None
+
+
 # ─── Whitelist ────────────────────────────────────────────────────────────────
 
 async def get_whitelist() -> List[Dict[str, Any]]:
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM whitelist ORDER BY added_at") as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+    db = await get_db()
+    async with db.execute("SELECT * FROM whitelist ORDER BY added_at") as cur:
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
 
 async def is_whitelisted(telegram_id: int) -> bool:
-    async with aiosqlite.connect(_db_path) as db:
-        async with db.execute(
-            "SELECT 1 FROM whitelist WHERE telegram_id = ?", (telegram_id,)
-        ) as cur:
-            return await cur.fetchone() is not None
+    db = await get_db()
+    async with db.execute(
+        "SELECT 1 FROM whitelist WHERE telegram_id = ?", (telegram_id,)
+    ) as cur:
+        return await cur.fetchone() is not None
 
 
 async def add_to_whitelist(telegram_id: int, added_by: int):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO whitelist (telegram_id, added_by) VALUES (?, ?)",
-            (telegram_id, added_by),
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "INSERT OR IGNORE INTO whitelist (telegram_id, added_by) VALUES (?, ?)",
+        (telegram_id, added_by),
+    )
+    await db.commit()
 
 
 async def remove_from_whitelist(telegram_id: int):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute("DELETE FROM whitelist WHERE telegram_id = ?", (telegram_id,))
-        await db.execute("UPDATE users SET is_active = 0 WHERE id = ?", (telegram_id,))
-        await db.commit()
+    db = await get_db()
+    await db.execute("DELETE FROM whitelist WHERE telegram_id = ?", (telegram_id,))
+    await db.execute("UPDATE users SET is_active = 0 WHERE id = ?", (telegram_id,))
+    await db.commit()
 
 
 # ─── Users ────────────────────────────────────────────────────────────────────
 
 async def get_user(telegram_id: int) -> Optional[Dict[str, Any]]:
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM users WHERE id = ?", (telegram_id,)
-        ) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
+    db = await get_db()
+    async with db.execute(
+        "SELECT * FROM users WHERE id = ?", (telegram_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
 
 
 async def upsert_user(telegram_id: int, username: str, full_name: str):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            """INSERT INTO users (id, username, full_name)
-               VALUES (?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET username=excluded.username, full_name=excluded.full_name""",
-            (telegram_id, username, full_name),
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        """INSERT INTO users (id, username, full_name)
+           VALUES (?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET username=excluded.username, full_name=excluded.full_name""",
+        (telegram_id, username, full_name),
+    )
+    await db.commit()
 
 
 async def set_user_role(telegram_id: int, role: str):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute("UPDATE users SET role = ? WHERE id = ?", (role, telegram_id))
-        await db.commit()
+    db = await get_db()
+    await db.execute("UPDATE users SET role = ? WHERE id = ?", (role, telegram_id))
+    await db.commit()
 
 
 async def set_user_birthdate(telegram_id: int, birthdate: str):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "UPDATE users SET child_birthdate = ?, onboarded_at = datetime('now') WHERE id = ?",
-            (birthdate, telegram_id),
-        )
-        # Сбросить age_notifications при смене даты
-        await db.execute(
-            "DELETE FROM age_notifications WHERE user_id = ?", (telegram_id,)
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET child_birthdate = ?, onboarded_at = datetime('now') WHERE id = ?",
+        (birthdate, telegram_id),
+    )
+    await db.execute(
+        "DELETE FROM age_notifications WHERE user_id = ?", (telegram_id,)
+    )
+    await db.commit()
 
 
 async def set_search_mode(telegram_id: int, mode: str):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "UPDATE users SET search_mode = ? WHERE id = ?", (mode, telegram_id)
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET search_mode = ? WHERE id = ?", (mode, telegram_id)
+    )
+    await db.commit()
 
 
 async def set_child_context(telegram_id: int, context: Dict):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "UPDATE users SET child_context = ? WHERE id = ?",
-            (json.dumps(context, ensure_ascii=False), telegram_id),
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET child_context = ? WHERE id = ?",
+        (json.dumps(context, ensure_ascii=False), telegram_id),
+    )
+    await db.commit()
 
 
 async def get_all_active_users() -> List[Dict[str, Any]]:
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM users WHERE is_active = 1 AND onboarded_at IS NOT NULL"
-        ) as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+    db = await get_db()
+    async with db.execute(
+        "SELECT * FROM users WHERE is_active = 1 AND onboarded_at IS NOT NULL"
+    ) as cur:
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
 
 # ─── Messages (история) ───────────────────────────────────────────────────────
 
 async def add_message(user_id: int, role: str, content: str):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
-            (user_id, role, content),
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
+        (user_id, role, content),
+    )
+    await db.commit()
 
 
 async def get_last_messages(user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT role, content FROM messages
-               WHERE user_id = ?
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (user_id, limit),
-        ) as cur:
-            rows = await cur.fetchall()
-            # Реверс для хронологического порядка
-            return [dict(r) for r in reversed(rows)]
+    db = await get_db()
+    async with db.execute(
+        """SELECT role, content FROM messages
+           WHERE user_id = ?
+           ORDER BY created_at DESC
+           LIMIT ?""",
+        (user_id, limit),
+    ) as cur:
+        rows = await cur.fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+
+async def prune_old_messages(user_id: int, keep: int = 100):
+    """Удаляет старые сообщения, оставляя последние keep штук."""
+    db = await get_db()
+    await db.execute(
+        """DELETE FROM messages WHERE user_id = ? AND id NOT IN (
+            SELECT id FROM messages WHERE user_id = ?
+            ORDER BY created_at DESC LIMIT ?
+        )""",
+        (user_id, user_id, keep),
+    )
+    await db.commit()
 
 
 # ─── Books ────────────────────────────────────────────────────────────────────
@@ -156,86 +183,83 @@ async def add_book(
     chunk_count: int,
     chroma_ids: Optional[List[str]] = None,
 ) -> int:
-    async with aiosqlite.connect(_db_path) as db:
-        cur = await db.execute(
-            """INSERT INTO books
-               (filename, original_name, owner_id, scope, age_range_min, age_range_max, chunk_count, chroma_ids)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                filename,
-                original_name,
-                owner_id,
-                scope,
-                age_range_min,
-                age_range_max,
-                chunk_count,
-                json.dumps(chroma_ids or []),
-            ),
-        )
-        await db.commit()
-        return cur.lastrowid
+    db = await get_db()
+    cur = await db.execute(
+        """INSERT INTO books
+           (filename, original_name, owner_id, scope, age_range_min, age_range_max, chunk_count, chroma_ids)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            filename,
+            original_name,
+            owner_id,
+            scope,
+            age_range_min,
+            age_range_max,
+            chunk_count,
+            json.dumps(chroma_ids or []),
+        ),
+    )
+    await db.commit()
+    return cur.lastrowid
 
 
 async def update_book_chroma_ids(book_id: int, chroma_ids: List[str]):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "UPDATE books SET chroma_ids = ? WHERE id = ?",
-            (json.dumps(chroma_ids), book_id),
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "UPDATE books SET chroma_ids = ? WHERE id = ?",
+        (json.dumps(chroma_ids), book_id),
+    )
+    await db.commit()
 
 
 async def get_book(book_id: int) -> Optional[Dict[str, Any]]:
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM books WHERE id = ?", (book_id,)) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
+    db = await get_db()
+    async with db.execute("SELECT * FROM books WHERE id = ?", (book_id,)) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
 
 
 async def get_shared_books() -> List[Dict[str, Any]]:
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM books WHERE scope = 'shared' ORDER BY uploaded_at"
-        ) as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+    db = await get_db()
+    async with db.execute(
+        "SELECT * FROM books WHERE scope = 'shared' ORDER BY uploaded_at"
+    ) as cur:
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
 
 async def get_personal_books(user_id: int) -> List[Dict[str, Any]]:
-    async with aiosqlite.connect(_db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM books WHERE scope = 'personal' AND owner_id = ? ORDER BY uploaded_at",
-            (user_id,),
-        ) as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+    db = await get_db()
+    async with db.execute(
+        "SELECT * FROM books WHERE scope = 'personal' AND owner_id = ? ORDER BY uploaded_at",
+        (user_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
 
 async def delete_book(book_id: int):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute("DELETE FROM user_book_exclusions WHERE book_id = ?", (book_id,))
-        await db.execute("DELETE FROM age_notifications WHERE book_id = ?", (book_id,))
-        await db.execute("DELETE FROM books WHERE id = ?", (book_id,))
-        await db.commit()
+    db = await get_db()
+    await db.execute("DELETE FROM user_book_exclusions WHERE book_id = ?", (book_id,))
+    await db.execute("DELETE FROM age_notifications WHERE book_id = ?", (book_id,))
+    await db.execute("DELETE FROM books WHERE id = ?", (book_id,))
+    await db.commit()
 
 
 async def get_kb_stats() -> Dict[str, int]:
-    async with aiosqlite.connect(_db_path) as db:
-        async with db.execute(
-            "SELECT COUNT(*), COALESCE(SUM(chunk_count), 0) FROM books WHERE scope = 'shared'"
-        ) as cur:
-            shared_books, shared_chunks = await cur.fetchone()
-        async with db.execute(
-            "SELECT COUNT(*) FROM books WHERE scope = 'personal'"
-        ) as cur:
-            personal_books = (await cur.fetchone())[0]
-        async with db.execute(
-            "SELECT COUNT(*) FROM users WHERE is_active = 1"
-        ) as cur:
-            user_count = (await cur.fetchone())[0]
+    db = await get_db()
+    async with db.execute(
+        "SELECT COUNT(*), COALESCE(SUM(chunk_count), 0) FROM books WHERE scope = 'shared'"
+    ) as cur:
+        shared_books, shared_chunks = await cur.fetchone()
+    async with db.execute(
+        "SELECT COUNT(*) FROM books WHERE scope = 'personal'"
+    ) as cur:
+        personal_books = (await cur.fetchone())[0]
+    async with db.execute(
+        "SELECT COUNT(*) FROM users WHERE is_active = 1"
+    ) as cur:
+        user_count = (await cur.fetchone())[0]
     return {
         "shared_books": shared_books,
         "shared_chunks": shared_chunks,
@@ -247,56 +271,56 @@ async def get_kb_stats() -> Dict[str, int]:
 # ─── User Book Exclusions ─────────────────────────────────────────────────────
 
 async def exclude_book(user_id: int, book_id: int):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO user_book_exclusions (user_id, book_id) VALUES (?, ?)",
-            (user_id, book_id),
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "INSERT OR IGNORE INTO user_book_exclusions (user_id, book_id) VALUES (?, ?)",
+        (user_id, book_id),
+    )
+    await db.commit()
 
 
 async def include_book(user_id: int, book_id: int):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "DELETE FROM user_book_exclusions WHERE user_id = ? AND book_id = ?",
-            (user_id, book_id),
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "DELETE FROM user_book_exclusions WHERE user_id = ? AND book_id = ?",
+        (user_id, book_id),
+    )
+    await db.commit()
 
 
 async def get_excluded_book_ids(user_id: int) -> List[int]:
-    async with aiosqlite.connect(_db_path) as db:
-        async with db.execute(
-            "SELECT book_id FROM user_book_exclusions WHERE user_id = ?", (user_id,)
-        ) as cur:
-            rows = await cur.fetchall()
-            return [r[0] for r in rows]
+    db = await get_db()
+    async with db.execute(
+        "SELECT book_id FROM user_book_exclusions WHERE user_id = ?", (user_id,)
+    ) as cur:
+        rows = await cur.fetchall()
+        return [r[0] for r in rows]
 
 
 async def is_book_excluded(user_id: int, book_id: int) -> bool:
-    async with aiosqlite.connect(_db_path) as db:
-        async with db.execute(
-            "SELECT 1 FROM user_book_exclusions WHERE user_id = ? AND book_id = ?",
-            (user_id, book_id),
-        ) as cur:
-            return await cur.fetchone() is not None
+    db = await get_db()
+    async with db.execute(
+        "SELECT 1 FROM user_book_exclusions WHERE user_id = ? AND book_id = ?",
+        (user_id, book_id),
+    ) as cur:
+        return await cur.fetchone() is not None
 
 
 # ─── Age Notifications ────────────────────────────────────────────────────────
 
 async def mark_notification_sent(user_id: int, book_id: int):
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO age_notifications (user_id, book_id) VALUES (?, ?)",
-            (user_id, book_id),
-        )
-        await db.commit()
+    db = await get_db()
+    await db.execute(
+        "INSERT OR IGNORE INTO age_notifications (user_id, book_id) VALUES (?, ?)",
+        (user_id, book_id),
+    )
+    await db.commit()
 
 
 async def was_notification_sent(user_id: int, book_id: int) -> bool:
-    async with aiosqlite.connect(_db_path) as db:
-        async with db.execute(
-            "SELECT 1 FROM age_notifications WHERE user_id = ? AND book_id = ?",
-            (user_id, book_id),
-        ) as cur:
-            return await cur.fetchone() is not None
+    db = await get_db()
+    async with db.execute(
+        "SELECT 1 FROM age_notifications WHERE user_id = ? AND book_id = ?",
+        (user_id, book_id),
+    ) as cur:
+        return await cur.fetchone() is not None

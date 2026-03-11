@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
@@ -5,7 +6,7 @@ from kb.embedder import embed_query
 from kb.chroma_client import query_collection
 
 
-def search_kb(
+def _search_kb_sync(
     user_id: int,
     query: str,
     age_months: Optional[int] = None,
@@ -13,16 +14,14 @@ def search_kb(
     n_results: int = 10,
 ) -> List[Dict[str, Any]]:
     """
-    Ищет по shared_kb и личной коллекции user_id.
+    Синхронный поиск по shared_kb и личной коллекции user_id.
     Применяет пост-фильтрацию по excluded_book_ids.
-    Возвращает список {document, metadata, distance}, отсортированный по релевантности.
     """
     if excluded_book_ids is None:
         excluded_book_ids = []
 
     query_embedding = embed_query(query)
 
-    # Запросить shared и personal коллекции
     shared_results = query_collection(
         scope="shared",
         user_id=None,
@@ -38,13 +37,11 @@ def search_kb(
         age_months=age_months,
     )
 
-    # Пост-фильтрация: убрать исключённые shared книги
     filtered_shared = [
         item for item in shared_results
         if item["metadata"].get("book_id") not in excluded_book_ids
     ]
 
-    # Объединить и отсортировать по дистанции (меньше = лучше)
     combined = filtered_shared + personal_results
     combined.sort(key=lambda x: x["distance"])
 
@@ -59,6 +56,24 @@ def search_kb(
         len(top),
     )
     return top
+
+
+async def search_kb(
+    user_id: int,
+    query: str,
+    age_months: Optional[int] = None,
+    excluded_book_ids: Optional[List[int]] = None,
+    n_results: int = 10,
+) -> List[Dict[str, Any]]:
+    """Async обёртка — выносит CPU-bound embed + ChromaDB I/O в отдельный поток."""
+    return await asyncio.to_thread(
+        _search_kb_sync,
+        user_id=user_id,
+        query=query,
+        age_months=age_months,
+        excluded_book_ids=excluded_book_ids,
+        n_results=n_results,
+    )
 
 
 def format_chunks_for_prompt(chunks: List[Dict[str, Any]]) -> str:
