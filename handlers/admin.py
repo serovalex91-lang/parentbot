@@ -111,6 +111,40 @@ async def admin_stats(callback: CallbackQuery, db_user: dict = None):
     await callback.answer()
 
 
+@router.callback_query(F.data == "admin:usage")
+async def admin_usage(callback: CallbackQuery, db_user: dict = None):
+    if not _is_admin(db_user):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+    users_stats = await db.get_all_users_usage_stats()
+    if not users_stats:
+        await callback.message.answer("Нет данных о расходах.")
+        await callback.answer()
+        return
+
+    total_cost = sum(u["total_cost"] for u in users_stats)
+    total_tokens = sum(u["total_input"] + u["total_output"] for u in users_stats)
+    total_requests = sum(u["total_requests"] for u in users_stats)
+
+    lines = [f"<b>💰 Расходы по юзерам</b>\n"]
+    lines.append(
+        f"Всего: <b>{total_requests}</b> запросов, "
+        f"<b>{total_tokens:,}</b> токенов, "
+        f"<b>${total_cost:.4f}</b>\n"
+    )
+    for u in users_stats:
+        if u["total_requests"] == 0:
+            continue
+        name = u["full_name"] or u["username"] or str(u["id"])
+        tok = u["total_input"] + u["total_output"]
+        lines.append(
+            f"<b>{name}</b>: {u['total_requests']} запр., "
+            f"{tok:,} tok, ${u['total_cost']:.4f}"
+        )
+    await callback.message.answer("\n".join(lines))
+    await callback.answer()
+
+
 @router.callback_query(F.data == "admin:broadcast")
 async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext, db_user: dict = None):
     if not _is_admin(db_user):

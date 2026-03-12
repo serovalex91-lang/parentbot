@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from datetime import date
 from typing import List, Dict, Optional
 import anthropic
@@ -10,6 +11,26 @@ _client: Optional[anthropic.AsyncAnthropic] = None
 
 MODEL_SONNET = "claude-sonnet-4-6"
 MODEL_HAIKU = "claude-haiku-4-5-20251001"
+
+# Цены за 1M токенов (USD) — https://docs.anthropic.com/en/docs/about-claude/pricing
+PRICING = {
+    MODEL_SONNET: {"input": 3.0, "output": 15.0},
+    MODEL_HAIKU:  {"input": 0.80, "output": 4.0},
+}
+
+
+@dataclass
+class ClaudeResponse:
+    text: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+
+
+def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    prices = PRICING.get(model, PRICING[MODEL_HAIKU])
+    return (input_tokens * prices["input"] + output_tokens * prices["output"]) / 1_000_000
 
 _STYLE_MAP = {
     "gentle": (
@@ -208,7 +229,7 @@ async def ask_claude(
     brave_results: str = "",
     my_style: str = "",
     partner_style: str = "",
-) -> str:
+) -> ClaudeResponse:
     client = get_client()
 
     system_prompt = _build_system_prompt(
@@ -236,7 +257,23 @@ async def ask_claude(
             system=system_prompt,
             messages=messages,
         )
-        return _sanitize_markdown(response.content[0].text)
+        text = _sanitize_markdown(response.content[0].text)
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+        cost = calculate_cost(model, input_tokens, output_tokens)
+
+        logger.info(
+            "Usage: model={} in={} out={} cost=${:.4f}",
+            model.split("-")[1], input_tokens, output_tokens, cost,
+        )
+
+        return ClaudeResponse(
+            text=text,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+        )
     except Exception as e:
         logger.error("Ошибка Claude API ({}): {}", model, e)
         raise

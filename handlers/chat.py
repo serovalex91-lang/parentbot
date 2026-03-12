@@ -87,6 +87,7 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
         "👤 Мой профиль",
         "❓ Помощь",
         "💬 Задать вопрос",
+        "💰 Мои расходы",
     }
     if message.text in skip_texts:
         return
@@ -154,7 +155,7 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
 
         # Вызов Claude
         try:
-            response = await ask_claude(
+            result = await ask_claude(
                 config=config,
                 role=role,
                 age_display=age_display,
@@ -172,15 +173,35 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
             await message.answer("❌ Ошибка при получении ответа. Попробуй позже.")
             return
 
+    response_text = result.text
+
     # Сохранить в историю
     await db.add_message(user_id, "user", user_text)
-    await db.add_message(user_id, "assistant", response)
+    await db.add_message(user_id, "assistant", response_text)
     await db.prune_old_messages(user_id, keep=100)
 
-    if brave_text and search_mode == "kb_internet":
-        response += "\n\n<i>🌐 Ответ дополнен данными из интернета.</i>"
+    # Сохранить usage
+    await db.add_token_usage(
+        user_id=user_id,
+        model=result.model,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cost_usd=result.cost_usd,
+    )
 
-    for part in split_long_message(response):
+    if brave_text and search_mode == "kb_internet":
+        response_text += "\n\n<i>🌐 Ответ дополнен данными из интернета.</i>"
+
+    # Строка стоимости
+    model_short = result.model.split("-")[1].capitalize()
+    cost_line = (
+        f"\n\n<i>{model_short} · "
+        f"{result.input_tokens + result.output_tokens} tok · "
+        f"${result.cost_usd:.4f}</i>"
+    )
+    response_text += cost_line
+
+    for part in split_long_message(response_text):
         await message.answer(part)
 
 

@@ -15,7 +15,8 @@ def main_menu(search_mode: str = "kb_only", child_gender: str = "") -> ReplyKeyb
         keyboard=[
             [KeyboardButton(text="💬 Задать вопрос"), KeyboardButton(text=child_btn)],
             [KeyboardButton(text=mode_label), KeyboardButton(text="📖 Моя библиотека")],
-            [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="❓ Помощь")],
+            [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="💰 Мои расходы")],
+            [KeyboardButton(text="❓ Помощь")],
         ],
         resize_keyboard=True,
     )
@@ -131,6 +132,7 @@ def admin_keyboard(whitelist: list) -> InlineKeyboardMarkup:
     builder.button(text="➖ Удалить пользователя", callback_data="admin:remove")
     builder.button(text="📋 Список whitelist", callback_data="admin:list")
     builder.button(text="📊 Статистика KB", callback_data="admin:stats")
+    builder.button(text="💰 Расходы юзеров", callback_data="admin:usage")
     builder.button(text="📢 Рассылка", callback_data="admin:broadcast")
     builder.adjust(1)
     return builder.as_markup()

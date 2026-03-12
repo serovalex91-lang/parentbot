@@ -324,3 +324,53 @@ async def was_notification_sent(user_id: int, book_id: int) -> bool:
         (user_id, book_id),
     ) as cur:
         return await cur.fetchone() is not None
+
+
+# ─── Token Usage ─────────────────────────────────────────────────────────────
+
+async def add_token_usage(
+    user_id: int, model: str, input_tokens: int, output_tokens: int, cost_usd: float
+):
+    db = await get_db()
+    await db.execute(
+        """INSERT INTO token_usage (user_id, model, input_tokens, output_tokens, cost_usd)
+           VALUES (?, ?, ?, ?, ?)""",
+        (user_id, model, input_tokens, output_tokens, cost_usd),
+    )
+    await db.commit()
+
+
+async def get_user_usage_stats(user_id: int) -> Dict[str, Any]:
+    """Суммарная статистика токенов и расходов для юзера."""
+    db = await get_db()
+    async with db.execute(
+        """SELECT
+            COUNT(*) as total_requests,
+            COALESCE(SUM(input_tokens), 0) as total_input,
+            COALESCE(SUM(output_tokens), 0) as total_output,
+            COALESCE(SUM(cost_usd), 0.0) as total_cost
+           FROM token_usage WHERE user_id = ?""",
+        (user_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row)
+
+
+async def get_all_users_usage_stats() -> List[Dict[str, Any]]:
+    """Статистика расходов по всем юзерам (для админки)."""
+    db = await get_db()
+    async with db.execute(
+        """SELECT
+            u.id, u.username, u.full_name,
+            COUNT(t.id) as total_requests,
+            COALESCE(SUM(t.input_tokens), 0) as total_input,
+            COALESCE(SUM(t.output_tokens), 0) as total_output,
+            COALESCE(SUM(t.cost_usd), 0.0) as total_cost
+           FROM users u
+           LEFT JOIN token_usage t ON u.id = t.user_id
+           WHERE u.is_active = 1
+           GROUP BY u.id
+           ORDER BY total_cost DESC""",
+    ) as cur:
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]

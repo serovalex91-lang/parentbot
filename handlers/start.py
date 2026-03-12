@@ -176,6 +176,26 @@ async def process_setdate(message: Message, state: FSMContext, db_user: dict = N
     )
 
 
+# ─── Мои расходы ─────────────────────────────────────────────────────────────
+
+@router.message(F.text == "💰 Мои расходы")
+async def cmd_my_usage(message: Message, db_user: dict = None):
+    if not db_user:
+        await message.answer("Сначала пройди настройку через /start")
+        return
+
+    stats = await db.get_user_usage_stats(message.from_user.id)
+    total_tokens = stats["total_input"] + stats["total_output"]
+
+    await message.answer(
+        "<b>💰 Мои расходы</b>\n\n"
+        f"Запросов: <b>{stats['total_requests']}</b>\n"
+        f"Токенов: <b>{total_tokens:,}</b> "
+        f"(вход: {stats['total_input']:,} / выход: {stats['total_output']:,})\n"
+        f"Потрачено: <b>${stats['total_cost']:.4f}</b>"
+    )
+
+
 # ─── /myprofile ───────────────────────────────────────────────────────────────
 
 @router.message(F.text == "👤 Мой профиль")

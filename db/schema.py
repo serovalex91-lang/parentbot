@@ -60,6 +60,18 @@ CREATE TABLE IF NOT EXISTS age_notifications (
     sent_at     TEXT DEFAULT (datetime('now')),
     UNIQUE(user_id, book_id)
 );
+
+CREATE TABLE IF NOT EXISTS token_usage (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    model           TEXT NOT NULL,
+    input_tokens    INTEGER NOT NULL DEFAULT 0,
+    output_tokens   INTEGER NOT NULL DEFAULT 0,
+    cost_usd        REAL NOT NULL DEFAULT 0.0,
+    created_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_user ON token_usage(user_id, created_at DESC);
 """
 
 
