@@ -339,4 +339,10 @@ async def process_gender(callback: CallbackQuery, db_user: dict = None):
     context["child_gender"] = gender
     await db.set_child_context(callback.from_user.id, context)
     await callback.message.edit_text(f"✅ Пол ребёнка: <b>{gender_names.get(gender, gender)}</b>")
+    # Обновляем главное меню с новым полом
+    search_mode = db_user.get("search_mode", "kb_only") if db_user else "kb_only"
+    await callback.message.answer(
+        "Меню обновлено 👇",
+        reply_markup=main_menu(search_mode, gender),
+    )
     await callback.answer()
