@@ -184,15 +184,15 @@ def _build_system_prompt(
 
 def _sanitize_markdown(text: str) -> str:
     """Страховка: конвертирует остатки markdown в HTML для Telegram."""
-    # Заголовки: # Text → <b>Text</b>
-    text = re.sub(r"^#{1,3}\s+(.+)$", r"<b></b>", text, flags=re.MULTILINE)
-    # Bold: **text** → <b>text</b>
-    text = re.sub(r"\*\*(.+?)\*\*", r"<b></b>", text)
-    # Italic: *text* → <i>text</i> (но не списки)
-    text = re.sub(r"(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"<i></i>", text)
-    # Горизонтальные линии: --- → пустая строка
+    # Заголовки: # Text -> <b>Text</b>
+    text = re.sub(r"^#{1,3}\s+(.+)$", lambda m: "<b>" + m.group(1) + "</b>", text, flags=re.MULTILINE)
+    # Bold: **text** -> <b>text</b>
+    text = re.sub(r"\*\*(.+?)\*\*", lambda m: "<b>" + m.group(1) + "</b>", text)
+    # Italic: *text* -> <i>text</i>
+    text = re.sub(r"(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)", lambda m: "<i>" + m.group(1) + "</i>", text)
+    # Горизонтальные линии: --- -> пустая строка
     text = re.sub(r"^-{3,}$", "", text, flags=re.MULTILINE)
-    # Blockquote: > text → text
+    # Blockquote: > text -> text
     text = re.sub(r"^>\s?", "", text, flags=re.MULTILINE)
     return text
 
