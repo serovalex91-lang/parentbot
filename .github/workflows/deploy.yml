@@ -1,0 +1,23 @@
+name: Deploy to brain-server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 46.17.97.188
+          username: brain
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/brain/projects/parentbot
+            git pull origin main
+            systemctl --user restart parentbot
+            echo "Deploy done: $(date)"
