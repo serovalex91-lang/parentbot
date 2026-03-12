@@ -152,7 +152,7 @@ async def cmd_setdate(message: Message, state: FSMContext):
 
 
 @router.message(SetDate.waiting_birthdate)
-async def process_setdate(message: Message, state: FSMContext):
+async def process_setdate(message: Message, state: FSMContext, db_user: dict = None):
     birthdate = parse_birthdate(message.text or "")
     if not birthdate:
         await message.answer(
@@ -163,8 +163,17 @@ async def process_setdate(message: Message, state: FSMContext):
     await db.set_user_birthdate(message.from_user.id, birthdate)
     age = calculate_age(birthdate)
     await state.clear()
-    age_text = f"Новый возраст: <b>{age.display}</b>" if age else ""
-    await message.answer(f"✅ Дата рождения обновлена. {age_text}")
+    if age:
+        age_text = f"Новый возраст: <b>{age.display}</b>\n📖 {age.context}"
+    else:
+        age_text = ""
+    db_user = await db.get_user(message.from_user.id)
+    gender = _get_child_gender(db_user) if db_user else ""
+    search_mode = db_user.get("search_mode", "kb_only") if db_user else "kb_only"
+    await message.answer(
+        f"✅ Дата рождения обновлена. {age_text}",
+        reply_markup=main_menu(search_mode, gender),
+    )
 
 
 # ─── /myprofile ───────────────────────────────────────────────────────────────
@@ -180,7 +189,7 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
 
     birthdate = db_user.get("child_birthdate", "")
     age = calculate_age(birthdate) if birthdate else None
-    age_text = age.display if age else "не указана"
+    age_text = f"{age.display} — {age.context}" if age else "не указана"
 
     role_names = {"papa": "Папа 👨", "mama": "Мама 👩", "both": "Оба 👫"}
     role_text = role_names.get(db_user.get("role", ""), "не указана")
