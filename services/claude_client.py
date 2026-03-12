@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from typing import List, Dict, Optional
 import anthropic
 from loguru import logger
@@ -152,9 +153,12 @@ def _build_system_prompt(
             f"{brave_results}\n"
         )
 
+    today = date.today().strftime("%d.%m.%Y")
+
     return f"""Ты — эксперт-консультант по осознанному родительству и детскому развитию.
 Твоя миссия — помогать {role_text} растить ребёнка, опираясь на доказательную медицину, теорию привязанности и нейробиологию.
 
+Сегодняшняя дата: {today}.
 Текущий возраст ребёнка: {age_display} — {age_context}.
 {child_context_block}
 {role_instructions}
@@ -166,15 +170,31 @@ def _build_system_prompt(
 - Не давай медицинских диагнозов.
 - Внешние данные только после фактчекинга на соответствие гуманной педагогике.
 
-Формат ответа:
-- Используй HTML-теги для Telegram: <b>жирный</b>, <i>курсив</i>, <code>код</code>.
-- НЕ используй markdown: НЕ #, НЕ ##, НЕ **, НЕ __, НЕ ```, НЕ - списки. Telegram их НЕ рендерит.
-- Для списков используй нумерацию (1. 2. 3.) или символы (• ▸).
-- Для заголовков используй <b>Жирный текст</b> с пустой строкой сверху.
+КРИТИЧЕСКИ ВАЖНО — формат ответа:
+- Ты пишешь в Telegram-чат. Telegram понимает ТОЛЬКО HTML-теги: <b>, <i>, <code>.
+- ЗАПРЕЩЕНО использовать markdown: НЕ #, НЕ ##, НЕ **, НЕ __, НЕ ```, НЕ ---, НЕ >, НЕ *курсив*. Telegram покажет их КАК ЕСТЬ — сырым текстом.
+- Для списков: нумерация (1. 2. 3.) или символы (• ▸). НЕ используй «- » (дефис-пробел).
+- Для заголовков: <b>Жирный текст</b> с пустой строкой сверху.
+- НИКОГДА не проси пользователя сообщить дату — ты уже знаешь сегодняшнюю дату и возраст ребёнка.
 
 Структура ответа: начинай с объяснения что чувствует ребёнок и почему (с точки зрения развития мозга). Завершай конкретным маленьким шагом.
 {kb_block}{internet_block}"""
 
+
+
+def _sanitize_markdown(text: str) -> str:
+    """Страховка: конвертирует остатки markdown в HTML для Telegram."""
+    # Заголовки: # Text → <b>Text</b>
+    text = re.sub(r"^#{1,3}\s+(.+)$", r"<b></b>", text, flags=re.MULTILINE)
+    # Bold: **text** → <b>text</b>
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b></b>", text)
+    # Italic: *text* → <i>text</i> (но не списки)
+    text = re.sub(r"(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"<i></i>", text)
+    # Горизонтальные линии: --- → пустая строка
+    text = re.sub(r"^-{3,}$", "", text, flags=re.MULTILINE)
+    # Blockquote: > text → text
+    text = re.sub(r"^>\s?", "", text, flags=re.MULTILINE)
+    return text
 
 async def ask_claude(
     config: Config,
@@ -216,7 +236,7 @@ async def ask_claude(
             system=system_prompt,
             messages=messages,
         )
-        return response.content[0].text
+        return _sanitize_markdown(response.content[0].text)
     except Exception as e:
         logger.error("Ошибка Claude API ({}): {}", model, e)
         raise
