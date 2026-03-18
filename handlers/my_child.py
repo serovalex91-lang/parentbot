@@ -96,7 +96,7 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
         await thinking.update("Генерирую рекомендации...")
 
         try:
-            response = await ask_claude(
+            result = await ask_claude(
                 config=config,
                 role=role,
                 age_display=age.display,
@@ -114,7 +114,23 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
             return
 
     await db.add_message(user_id, "user", user_prompt)
-    await db.add_message(user_id, "assistant", response)
+    await db.add_message(user_id, "assistant", result.text)
 
-    for part in split_long_message(response):
+    await db.add_token_usage(
+        user_id=user_id,
+        model=result.model,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cost_usd=result.cost_usd,
+    )
+
+    model_short = result.model.split("-")[1].capitalize()
+    cost_line = (
+        f"\n\n<i>{model_short} · "
+        f"{result.input_tokens + result.output_tokens} tok · "
+        f"${result.cost_usd:.4f}</i>"
+    )
+    response_text = result.text + cost_line
+
+    for part in split_long_message(response_text):
         await message.answer(part)
