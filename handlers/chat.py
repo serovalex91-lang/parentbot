@@ -106,10 +106,11 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
         # Параллельно: история + исключения + контекст ребёнка
         search_mode = db_user.get("search_mode", "kb_only")
         max_hist = config.max_history_messages if config else 20
+        gap_hours = config.session_gap_hours if config else 4
 
         excluded_ids, history, child_context = await asyncio.gather(
             db.get_excluded_book_ids(user_id),
-            db.get_last_messages(user_id, limit=max_hist),
+            db.get_last_messages(user_id, limit=max_hist, session_gap_hours=gap_hours),
             _get_child_context_str(db_user),
         )
 

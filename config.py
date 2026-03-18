@@ -20,6 +20,7 @@ class Config:
     claude_model: str
     claude_model_light: str
     max_history_messages: int
+    session_gap_hours: int
     log_level: str
 
     @property
@@ -66,5 +67,6 @@ def load_config() -> Config:
         claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
         claude_model_light=os.getenv("CLAUDE_MODEL_LIGHT", "claude-haiku-4-5-20251001"),
         max_history_messages=int(os.getenv("MAX_HISTORY_MESSAGES", "20")),
+        session_gap_hours=int(os.getenv("SESSION_GAP_HOURS", "4")),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
     )

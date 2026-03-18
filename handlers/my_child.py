@@ -91,7 +91,12 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
             except Exception:
                 pass
 
-        history = await db.get_last_messages(user_id, limit=config.max_history_messages if config else 20)
+        gap_hours = config.session_gap_hours if config else 4
+        history = await db.get_last_messages(
+            user_id,
+            limit=config.max_history_messages if config else 20,
+            session_gap_hours=gap_hours,
+        )
 
         await thinking.update("Генерирую рекомендации...")
 

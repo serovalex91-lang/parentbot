@@ -145,17 +145,47 @@ async def add_message(user_id: int, role: str, content: str):
     await db.commit()
 
 
-async def get_last_messages(user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+async def get_last_messages(
+    user_id: int, limit: int = 20, session_gap_hours: int = 4
+) -> List[Dict[str, Any]]:
+    """Возвращает последние сообщения в рамках текущей сессии.
+
+    Сессия обрывается, если между двумя соседними сообщениями
+    прошло больше session_gap_hours часов.
+    """
     db = await get_db()
+    # Берём чуть больше, чтобы найти разрыв сессии
+    fetch_limit = limit * 2
     async with db.execute(
-        """SELECT role, content FROM messages
+        """SELECT role, content, created_at FROM messages
            WHERE user_id = ?
            ORDER BY created_at DESC
            LIMIT ?""",
-        (user_id, limit),
+        (user_id, fetch_limit),
     ) as cur:
         rows = await cur.fetchall()
-        return [dict(r) for r in reversed(rows)]
+        rows = [dict(r) for r in rows]  # newest first
+
+    if not rows:
+        return []
+
+    # Ищем разрыв сессии (gap > N часов между соседними сообщениями)
+    from datetime import datetime, timedelta
+    session_messages = [rows[0]]
+    for i in range(1, len(rows)):
+        try:
+            t_newer = datetime.fromisoformat(rows[i - 1]["created_at"])
+            t_older = datetime.fromisoformat(rows[i]["created_at"])
+            if (t_newer - t_older) > timedelta(hours=session_gap_hours):
+                break  # нашли разрыв — старые сообщения не берём
+        except (ValueError, TypeError):
+            pass
+        session_messages.append(rows[i])
+
+    # Обрезаем до limit и разворачиваем в хронологический порядок
+    session_messages = session_messages[:limit]
+    result = [{"role": m["role"], "content": m["content"]} for m in reversed(session_messages)]
+    return result
 
 
 async def prune_old_messages(user_id: int, keep: int = 100):
