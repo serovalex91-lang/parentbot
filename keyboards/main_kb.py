@@ -27,7 +27,10 @@ def role_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="👨 Я папа", callback_data="role:papa")
     builder.button(text="👩 Я мама", callback_data="role:mama")
     builder.button(text="👫 Советы для обоих", callback_data="role:both")
-    builder.adjust(2, 1)
+    builder.button(text="👴 Я дедушка", callback_data="role:grandpa")
+    builder.button(text="👵 Я бабушка", callback_data="role:grandma")
+    builder.button(text="👪 Я родственник", callback_data="role:relative")
+    builder.adjust(2, 1, 2, 1)
     return builder.as_markup()
 
 

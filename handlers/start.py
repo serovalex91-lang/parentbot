@@ -86,7 +86,10 @@ async def cmd_start(message: Message, state: FSMContext, config: Config = None):
 @router.callback_query(Onboarding.waiting_role, F.data.startswith("role:"))
 async def process_role(callback: CallbackQuery, state: FSMContext):
     role = callback.data.split(":")[1]
-    role_names = {"papa": "Папа 👨", "mama": "Мама 👩", "both": "Оба родителя 👫"}
+    role_names = {
+        "papa": "Папа 👨", "mama": "Мама 👩", "both": "Оба родителя 👫",
+        "grandpa": "Дедушка 👴", "grandma": "Бабушка 👵", "relative": "Родственник 👪",
+    }
     await db.set_user_role(callback.from_user.id, role)
 
     db_user = await db.get_user(callback.from_user.id)
@@ -211,7 +214,10 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
     age = calculate_age(birthdate) if birthdate else None
     age_text = f"{age.display} — {age.context}" if age else "не указана"
 
-    role_names = {"papa": "Папа 👨", "mama": "Мама 👩", "both": "Оба 👫"}
+    role_names = {
+        "papa": "Папа 👨", "mama": "Мама 👩", "both": "Оба 👫",
+        "grandpa": "Дедушка 👴", "grandma": "Бабушка 👵", "relative": "Родственник 👪",
+    }
     role_text = role_names.get(db_user.get("role", ""), "не указана")
 
     gender_map = {"boy": "👦 Мальчик", "girl": "👧 Девочка"}

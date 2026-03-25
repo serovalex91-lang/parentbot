@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     id              INTEGER PRIMARY KEY,
     username        TEXT,
     full_name       TEXT,
-    role            TEXT CHECK(role IN ('papa', 'mama', 'both')),
+    role            TEXT CHECK(role IN ('papa', 'mama', 'both', 'grandma', 'grandpa', 'relative')),
     child_birthdate TEXT,
     child_context   TEXT,
     is_admin        INTEGER DEFAULT 0,
@@ -75,12 +75,36 @@ CREATE INDEX IF NOT EXISTS idx_token_usage_user ON token_usage(user_id, created_
 """
 
 
+async def _migrate_role_constraint(db):
+    """Расширяет CHECK constraint для role — добавляет grandma, grandpa, relative."""
+    async with db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        return
+    ddl = row[0]
+    if "grandma" in ddl:
+        return  # уже мигрировано
+    logger.info("Миграция: расширяю роли в таблице users...")
+    await db.execute("ALTER TABLE users RENAME TO _users_old")
+    await db.executescript(SCHEMA)
+    await db.execute(
+        """INSERT INTO users
+           SELECT * FROM _users_old"""
+    )
+    await db.execute("DROP TABLE _users_old")
+    await db.commit()
+    logger.info("Миграция ролей завершена")
+
+
 async def init_db(db_path: str, admin_id: int, whitelist_ids: List[int]):
     async with aiosqlite.connect(db_path) as db:
         # WAL mode для лучшей конкурентности
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript(SCHEMA)
+        await _migrate_role_constraint(db)
 
         for tg_id in whitelist_ids:
             await db.execute(
