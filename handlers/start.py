@@ -48,6 +48,26 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot, config: Confi
     logger.info("/start от user.id={} username={}", user.id, user.username)
 
     if not await db.is_whitelisted(user.id):
+        # Проверяем, был ли уже запрос
+        existing = await db.get_access_request(user.id)
+        if existing and existing["status"] == "pending":
+            await message.answer(
+                "⏳ Твой запрос уже отправлен администратору.\n"
+                "Жди ответа — тебе придёт уведомление."
+            )
+            return
+
+        if existing and existing["status"] == "rejected":
+            await message.answer(
+                "❌ Твой запрос был отклонён.\n"
+                "Обратись к администратору лично, если считаешь это ошибкой."
+            )
+            return
+
+        # Новый запрос
+        await db.create_access_request(
+            user.id, user.username or "", user.full_name or ""
+        )
         await message.answer(
             "🔒 Доступ ограничен.\n\n"
             "Этот бот работает по приглашению.\n"
@@ -409,6 +429,7 @@ async def process_access_request(callback: CallbackQuery, bot: Bot):
 
     if action == "approve":
         await db.add_to_whitelist(target_id, callback.from_user.id)
+        await db.resolve_access_request(target_id, "approved")
         await callback.message.edit_text(
             callback.message.text + f"\n\n✅ <b>Добавлен в whitelist</b>",
         )
@@ -420,6 +441,7 @@ async def process_access_request(callback: CallbackQuery, bot: Bot):
         except Exception as e:
             logger.warning("Не удалось уведомить юзера {}: {}", target_id, e)
     else:
+        await db.resolve_access_request(target_id, "rejected")
         await callback.message.edit_text(
             callback.message.text + f"\n\n❌ <b>Отклонён</b>",
         )

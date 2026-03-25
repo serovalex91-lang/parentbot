@@ -386,6 +386,42 @@ async def get_user_usage_stats(user_id: int) -> Dict[str, Any]:
         return dict(row)
 
 
+# ─── Access Requests ─────────────────────────────────────────────────────────
+
+async def get_access_request(telegram_id: int) -> Optional[Dict[str, Any]]:
+    db = await get_db()
+    async with db.execute(
+        "SELECT * FROM access_requests WHERE telegram_id = ?", (telegram_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def create_access_request(telegram_id: int, username: str, full_name: str):
+    db = await get_db()
+    await db.execute(
+        """INSERT INTO access_requests (telegram_id, username, full_name, status)
+           VALUES (?, ?, ?, 'pending')
+           ON CONFLICT(telegram_id) DO UPDATE SET
+               username = excluded.username,
+               full_name = excluded.full_name,
+               status = 'pending',
+               requested_at = datetime('now'),
+               resolved_at = NULL""",
+        (telegram_id, username, full_name),
+    )
+    await db.commit()
+
+
+async def resolve_access_request(telegram_id: int, status: str):
+    db = await get_db()
+    await db.execute(
+        "UPDATE access_requests SET status = ?, resolved_at = datetime('now') WHERE telegram_id = ?",
+        (status, telegram_id),
+    )
+    await db.commit()
+
+
 async def get_all_users_usage_stats() -> List[Dict[str, Any]]:
     """Статистика расходов по всем юзерам (для админки)."""
     db = await get_db()

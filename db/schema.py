@@ -72,6 +72,15 @@ CREATE TABLE IF NOT EXISTS token_usage (
 );
 
 CREATE INDEX IF NOT EXISTS idx_token_usage_user ON token_usage(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS access_requests (
+    telegram_id INTEGER PRIMARY KEY,
+    username    TEXT,
+    full_name   TEXT,
+    status      TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+    requested_at TEXT DEFAULT (datetime('now')),
+    resolved_at  TEXT
+);
 """
 
 
