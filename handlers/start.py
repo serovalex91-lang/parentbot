@@ -69,7 +69,7 @@ async def cmd_start(message: Message, state: FSMContext, config: Config = None):
         await message.answer(
             f"👋 С возвращением, {user.first_name}!\n\n"
             "Выбери действие из меню ниже.",
-            reply_markup=main_menu(db_user.get("search_mode", "kb_only"), gender),
+            reply_markup=main_menu(db_user.get("search_mode", "kb_only"), gender, db_user.get("role", "")),
         )
         return
 
@@ -139,6 +139,7 @@ async def process_birthdate(message: Message, state: FSMContext):
         reply_markup=main_menu(
             db_user.get("search_mode", "kb_only") if db_user else "kb_only",
             gender,
+            db_user.get("role", "") if db_user else "",
         ),
     )
 
@@ -175,7 +176,7 @@ async def process_setdate(message: Message, state: FSMContext, db_user: dict = N
     search_mode = db_user.get("search_mode", "kb_only") if db_user else "kb_only"
     await message.answer(
         f"✅ Дата рождения обновлена. {age_text}",
-        reply_markup=main_menu(search_mode, gender),
+        reply_markup=main_menu(search_mode, gender, db_user.get("role", "") if db_user else ""),
     )
 
 
@@ -378,6 +379,6 @@ async def process_gender(callback: CallbackQuery, db_user: dict = None):
     search_mode = db_user.get("search_mode", "kb_only") if db_user else "kb_only"
     await callback.message.answer(
         "Меню обновлено 👇",
-        reply_markup=main_menu(search_mode, gender),
+        reply_markup=main_menu(search_mode, gender, db_user.get("role", "") if db_user else ""),
     )
     await callback.answer()

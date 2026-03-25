@@ -7,10 +7,19 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def main_menu(search_mode: str = "kb_only", child_gender: str = "") -> ReplyKeyboardMarkup:
+def _child_button_text(child_gender: str = "", role: str = "") -> str:
+    is_grandparent = role in ("grandpa", "grandma")
+    if child_gender == "boy":
+        return "👶 Расскажи о внуке" if is_grandparent else "👶 Расскажи о сыночке"
+    elif child_gender == "girl":
+        return "👶 Расскажи о внучке" if is_grandparent else "👶 Расскажи о дочке"
+    else:
+        return "👶 Расскажи о внуке" if is_grandparent else "👶 Расскажи о ребёнке"
+
+
+def main_menu(search_mode: str = "kb_only", child_gender: str = "", role: str = "") -> ReplyKeyboardMarkup:
     mode_label = "📚 Только из книг ✓" if search_mode == "kb_only" else "🌐 Книги + интернет ✓"
-    gender_labels = {"boy": "👶 Расскажи о сыночке", "girl": "👶 Расскажи о дочке"}
-    child_btn = gender_labels.get(child_gender, "👶 Расскажи о ребёнке")
+    child_btn = _child_button_text(child_gender, role)
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="💬 Задать вопрос"), KeyboardButton(text=child_btn)],

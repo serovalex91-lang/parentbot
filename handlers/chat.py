@@ -60,7 +60,7 @@ async def toggle_search_mode(message: Message, db_user: dict = None):
     mode_name = "🌐 Книги + интернет" if new_mode == "kb_internet" else "📚 Только из книг"
     await message.answer(
         f"✅ Режим поиска изменён: <b>{mode_name}</b>",
-        reply_markup=main_menu(new_mode, _get_gender(db_user)),
+        reply_markup=main_menu(new_mode, _get_gender(db_user), db_user.get("role", "") if db_user else ""),
     )
 
 
@@ -79,10 +79,9 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
         await message.answer("Сначала пройди настройку через /start")
         return
 
+    if message.text and message.text.startswith("👶 Расскажи о"):
+        return
     skip_texts = {
-        "👶 Расскажи о дочке",
-        "👶 Расскажи о сыночке",
-        "👶 Расскажи о ребёнке",
         "📖 Моя библиотека",
         "👤 Мой профиль",
         "❓ Помощь",
