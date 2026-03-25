@@ -3,11 +3,12 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
+from aiogram import Bot
 from loguru import logger
 
 from config import Config
 from states.fsm import Onboarding, SetDate, EditProfile
-from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard
+from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
 import db.queries as db
 
@@ -42,16 +43,30 @@ def _get_context(db_user: dict) -> dict:
 # ─── /start ───────────────────────────────────────────────────────────────────
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, config: Config = None):
+async def cmd_start(message: Message, state: FSMContext, bot: Bot, config: Config = None):
     user = message.from_user
     logger.info("/start от user.id={} username={}", user.id, user.username)
 
     if not await db.is_whitelisted(user.id):
         await message.answer(
             "🔒 Доступ ограничен.\n\n"
-            "Этот бот работает только для приглашённых пользователей. "
-            "Обратитесь к администратору."
+            "Этот бот работает по приглашению.\n"
+            "Твой запрос отправлен администратору — жди ответа."
         )
+        # Уведомляем админа
+        if config and config.admin_telegram_id:
+            username_str = f"@{user.username}" if user.username else "нет username"
+            try:
+                await bot.send_message(
+                    config.admin_telegram_id,
+                    f"🔔 <b>Запрос на доступ</b>\n\n"
+                    f"Имя: <b>{user.full_name or '—'}</b>\n"
+                    f"Username: {username_str}\n"
+                    f"ID: <code>{user.id}</code>",
+                    reply_markup=access_request_keyboard(user.id),
+                )
+            except Exception as e:
+                logger.error("Не удалось уведомить админа о запросе доступа: {}", e)
         return
 
     await db.upsert_user(user.id, user.username or "", user.full_name or "")
@@ -381,4 +396,39 @@ async def process_gender(callback: CallbackQuery, db_user: dict = None):
         "Меню обновлено 👇",
         reply_markup=main_menu(search_mode, gender, db_user.get("role", "") if db_user else ""),
     )
+    await callback.answer()
+
+
+# ─── Запрос на доступ (approve / reject) ─────────────────────────────────────
+
+@router.callback_query(F.data.startswith("access:"))
+async def process_access_request(callback: CallbackQuery, bot: Bot):
+    parts = callback.data.split(":")
+    action = parts[1]       # "approve" или "reject"
+    target_id = int(parts[2])
+
+    if action == "approve":
+        await db.add_to_whitelist(target_id, callback.from_user.id)
+        await callback.message.edit_text(
+            callback.message.text + f"\n\n✅ <b>Добавлен в whitelist</b>",
+        )
+        try:
+            await bot.send_message(
+                target_id,
+                "✅ Доступ открыт! Нажми /start чтобы начать.",
+            )
+        except Exception as e:
+            logger.warning("Не удалось уведомить юзера {}: {}", target_id, e)
+    else:
+        await callback.message.edit_text(
+            callback.message.text + f"\n\n❌ <b>Отклонён</b>",
+        )
+        try:
+            await bot.send_message(
+                target_id,
+                "❌ К сожалению, запрос на доступ отклонён.",
+            )
+        except Exception as e:
+            logger.warning("Не удалось уведомить юзера {}: {}", target_id, e)
+
     await callback.answer()
