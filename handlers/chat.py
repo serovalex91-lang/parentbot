@@ -235,7 +235,10 @@ async def _maybe_onboarding_prompt(
     if action["type"] == "fill":
         text = f"{action['disclaimer']}\n\n{action['question']}"
         await state.set_state(OnboardingPrompt.waiting_fill_answer)
-        await state.update_data(onboarding_field=action["field"])
+        await state.update_data(
+            onboarding_field=action["field"],
+            onboarding_question=action["question"],
+        )
         await message.answer(text)
         await db.set_last_onboarding_prompt(message.from_user.id)
 

@@ -11,6 +11,7 @@ from states.fsm import Onboarding, SetDate, EditProfile, OnboardingPrompt
 from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
 from services.onboarding import update_context_field, remove_context_field, format_child_summary
+from services.claude_client import validate_onboarding_answer
 import db.queries as db
 
 router = Router()
@@ -430,6 +431,7 @@ async def process_gender(callback: CallbackQuery, db_user: dict = None):
 async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: dict = None):
     data = await state.get_data()
     field = data.get("onboarding_field")
+    question = data.get("onboarding_question", "")
     value = (message.text or "").strip()
     await state.clear()
 
@@ -440,14 +442,38 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     context = _get_context(db_user)
     child_name = context.get("child_name", "ребёнка")
 
-    # Если поле уже заполнено — дополняем, а не перезаписываем
+    # Определяем возраст для валидации
+    birthdate = db_user.get("child_birthdate", "") if db_user else ""
+    age = calculate_age(birthdate) if birthdate else None
+    age_months = age.months if age else 12
+
+    # Валидация через Haiku
+    result = await validate_onboarding_answer(question, value, age_months, field)
+
+    if result.reason == "skip":
+        await message.answer("Ок, пропустим :)")
+        return
+
+    if not result.is_valid:
+        await message.answer(
+            f"Хм, кажется что-то не так: <i>{result.reason}</i>\n"
+            "Попробуй ещё раз или напиши «пропустить»."
+        )
+        # Возвращаем в состояние ожидания
+        await state.set_state(OnboardingPrompt.waiting_fill_answer)
+        await state.update_data(onboarding_field=field, onboarding_question=question)
+        return
+
+    normalized = result.normalized
+
+    # Если поле уже заполнено — дополняем
     existing = context.get(field, "")
     if existing:
-        context[field] = f"{existing}; {value}"
+        final_value = f"{existing}; {normalized}"
     else:
-        context[field] = value
+        final_value = normalized
 
-    context = update_context_field(context, field, context[field])
+    context = update_context_field(context, field, final_value)
     await db.set_child_context(message.from_user.id, context)
 
     field_labels = {
@@ -457,8 +483,9 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     }
     label = field_labels.get(field, field)
     await message.answer(
-        f"Записала в профиль {child_name} ({label}).\n"
-        f"Это поможет давать более точные ответы :)"
+        f"Записала в профиль {child_name} (<b>{label}</b>):\n"
+        f"<i>{normalized}</i>\n\n"
+        f"Буду учитывать в ответах :)"
     )
 
 
@@ -506,7 +533,32 @@ async def onboarding_review_edit(message: Message, state: FSMContext, db_user: d
 
     context = _get_context(db_user)
     child_name = context.get("child_name", "ребёнка")
-    context = update_context_field(context, field, value)
+
+    # Определяем возраст для валидации
+    birthdate = db_user.get("child_birthdate", "") if db_user else ""
+    age = calculate_age(birthdate) if birthdate else None
+    age_months = age.months if age else 12
+
+    # Валидация через Haiku
+    result = await validate_onboarding_answer(
+        "Обновление информации", value, age_months, field
+    )
+
+    if result.reason == "skip":
+        await message.answer("Оставляю без изменений.")
+        return
+
+    if not result.is_valid:
+        await message.answer(
+            f"Хм, кажется что-то не так: <i>{result.reason}</i>\n"
+            "Попробуй ещё раз или напиши «пропустить»."
+        )
+        await state.set_state(OnboardingPrompt.waiting_review_edit)
+        await state.update_data(onboarding_field=field)
+        return
+
+    normalized = result.normalized
+    context = update_context_field(context, field, normalized)
     await db.set_child_context(message.from_user.id, context)
 
     field_labels = {
@@ -516,7 +568,9 @@ async def onboarding_review_edit(message: Message, state: FSMContext, db_user: d
     }
     label = field_labels.get(field, field)
     await message.answer(
-        f"Обновила: {label} — <i>{value}</i>"
+        f"Обновила <b>{label}</b> {child_name}:\n"
+        f"<i>{normalized}</i>\n\n"
+        f"Учту в следующих ответах :)"
     )
 
 

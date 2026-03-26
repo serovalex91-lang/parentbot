@@ -299,3 +299,90 @@ async def ask_claude(
     except Exception as e:
         logger.error("Ошибка Claude API ({}): {}", model, e)
         raise
+
+
+# ─── Валидация onboarding-ответов ────────────────────────────────────────────
+
+@dataclass
+class ValidationResult:
+    is_valid: bool
+    normalized: str      # нормализованный текст для записи
+    reason: str          # причина отклонения (если невалидно)
+    cost_usd: float
+
+
+async def validate_onboarding_answer(
+    question: str,
+    answer: str,
+    age_months: int,
+    field: str,
+) -> ValidationResult:
+    """Валидация и нормализация ответа на onboarding-вопрос через Haiku."""
+    client = get_client()
+
+    field_labels = {
+        "child_features": "здоровье и особенности",
+        "child_character": "характер и поведение",
+        "child_notes": "заметки о ребёнке",
+    }
+    field_label = field_labels.get(field, "информация о ребёнке")
+
+    system = (
+        "Ты помощник родительского бота. Твоя задача — проверить и нормализовать "
+        "ответ пользователя на вопрос о его ребёнке.\n\n"
+        f"Ребёнку {age_months} месяцев. Категория: {field_label}.\n\n"
+        "Правила:\n"
+        "1. Если ответ адекватный — верни нормализованный текст: убери мусор, "
+        "оставь суть, сделай грамотно и кратко (1-2 предложения макс).\n"
+        "2. Если ответ явно невалидный (невозможные данные для возраста, бессмыслица, "
+        "не относится к ребёнку) — укажи это.\n"
+        "3. Если пользователь написал 'не знаю', 'пропустить', 'хз', 'потом' — "
+        "это пропуск.\n\n"
+        "Формат ответа строго JSON:\n"
+        '{"status": "ok", "text": "нормализованный текст"}\n'
+        '{"status": "invalid", "reason": "краткая причина"}\n'
+        '{"status": "skip"}\n'
+        "Только JSON, ничего больше."
+    )
+
+    prompt = f"Вопрос: {question}\nОтвет пользователя: {answer}"
+
+    try:
+        response = await client.messages.create(
+            model=MODEL_HAIKU,
+            max_tokens=200,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+        cost = calculate_cost(
+            MODEL_HAIKU, response.usage.input_tokens, response.usage.output_tokens
+        )
+        logger.info(
+            "Onboarding validation: in={} out={} cost=${:.4f}",
+            response.usage.input_tokens, response.usage.output_tokens, cost,
+        )
+
+        # Парсим JSON-ответ
+        import json as _json
+        # Извлекаем JSON из ответа (на случай если Haiku добавит обёртку)
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            data = _json.loads(raw[start:end])
+        else:
+            # Не удалось распарсить — принимаем как есть
+            return ValidationResult(True, answer.strip(), "", cost)
+
+        status = data.get("status", "ok")
+        if status == "ok":
+            return ValidationResult(True, data.get("text", answer.strip()), "", cost)
+        elif status == "skip":
+            return ValidationResult(False, "", "skip", cost)
+        else:
+            return ValidationResult(False, "", data.get("reason", "Некорректный ответ"), cost)
+
+    except Exception as e:
+        logger.warning("Onboarding validation error: {}", e)
+        # При ошибке — принимаем ответ как есть
+        return ValidationResult(True, answer.strip(), "", 0.0)
