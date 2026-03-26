@@ -144,6 +144,17 @@ async def get_all_active_users() -> List[Dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
+async def get_users_by_roles(roles: list) -> List[Dict[str, Any]]:
+    db = await get_db()
+    placeholders = ",".join("?" for _ in roles)
+    async with db.execute(
+        f"SELECT * FROM users WHERE is_active = 1 AND onboarded_at IS NOT NULL AND role IN ({placeholders})",
+        roles,
+    ) as cur:
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
 # ─── Messages (история) ───────────────────────────────────────────────────────
 
 async def add_message(user_id: int, role: str, content: str):

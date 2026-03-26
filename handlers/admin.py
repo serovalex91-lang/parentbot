@@ -231,6 +231,27 @@ async def cmd_broadcast(message: Message, bot: Bot, db_user: dict = None):
     await message.answer(f"✅ Рассылка: {sent} отправлено, {failed} ошибок.")
 
 
+@router.message(Command("broadcast_parents"))
+async def cmd_broadcast_parents(message: Message, bot: Bot, db_user: dict = None):
+    """Рассылка только для papa/mama/both."""
+    if not _is_admin(db_user):
+        return
+    text = message.text[len("/broadcast_parents"):].strip()
+    if not text:
+        await message.answer("Использование: /broadcast_parents <текст>")
+        return
+    users = await db.get_users_by_roles(["papa", "mama", "both"])
+    sent, failed = 0, 0
+    for user in users:
+        try:
+            await bot.send_message(user["id"], text)
+            sent += 1
+        except Exception as e:
+            logger.warning("Broadcast (parents) failed for {}: {}", user["id"], e)
+            failed += 1
+    await message.answer(f"✅ Рассылка родителям: {sent} отправлено, {failed} ошибок.")
+
+
 @router.message(F.text == "📖 Моя библиотека")
 async def my_library(message: Message, db_user: dict = None):
     if not db_user:
