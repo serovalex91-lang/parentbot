@@ -425,6 +425,15 @@ async def process_gender(callback: CallbackQuery, db_user: dict = None):
     await callback.answer()
 
 
+# ─── Onboarding: кнопка "Пропустить" ─────────────────────────────────────────
+
+@router.callback_query(F.data == "onboarding:skip")
+async def onboarding_skip(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Пропустим пока :)")
+    await callback.answer()
+
+
 # ─── Onboarding: ответ на fill-вопрос ─────────────────────────────────────────
 
 @router.message(OnboardingPrompt.waiting_fill_answer)
@@ -433,9 +442,9 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     field = data.get("onboarding_field")
     question = data.get("onboarding_question", "")
     value = (message.text or "").strip()
-    await state.clear()
 
     if not value or not field:
+        await state.clear()
         await message.answer("Пропустим пока :)")
         return
 
@@ -447,23 +456,33 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     age = calculate_age(birthdate) if birthdate else None
     age_months = age.months if age else 12
 
-    # Валидация через Haiku
+    # Валидация через Haiku (state НЕ очищаем до результата — защита от race condition)
     result = await validate_onboarding_answer(question, value, age_months, field)
 
+    # Записываем стоимость валидации
+    if result.cost_usd > 0:
+        await db.add_token_usage(
+            user_id=message.from_user.id,
+            model="claude-haiku-4-5-20251001",
+            input_tokens=0, output_tokens=0,
+            cost_usd=result.cost_usd,
+        )
+
     if result.reason == "skip":
+        await state.clear()
         await message.answer("Ок, пропустим :)")
         return
 
     if not result.is_valid:
+        # Оставляем state — юзер ещё отвечает
         await message.answer(
             f"Хм, кажется что-то не так: <i>{result.reason}</i>\n"
             "Попробуй ещё раз или напиши «пропустить»."
         )
-        # Возвращаем в состояние ожидания
-        await state.set_state(OnboardingPrompt.waiting_fill_answer)
-        await state.update_data(onboarding_field=field, onboarding_question=question)
         return
 
+    # Ответ валидный — теперь очищаем state
+    await state.clear()
     normalized = result.normalized
 
     # Если поле уже заполнено — дополняем
@@ -483,7 +502,7 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     }
     label = field_labels.get(field, field)
     await message.answer(
-        f"Записала в профиль {child_name} (<b>{label}</b>):\n"
+        f"Записано в профиль {child_name} (<b>{label}</b>):\n"
         f"<i>{normalized}</i>\n\n"
         f"Буду учитывать в ответах :)"
     )
@@ -493,6 +512,10 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
 
 @router.callback_query(F.data.startswith("review:"))
 async def process_review(callback: CallbackQuery, state: FSMContext, db_user: dict = None):
+    if not db_user:
+        await callback.answer("Сначала пройди настройку")
+        return
+
     parts = callback.data.split(":")
     action = parts[1]   # keep, edit, delete
     field = parts[2]
@@ -525,9 +548,9 @@ async def onboarding_review_edit(message: Message, state: FSMContext, db_user: d
     data = await state.get_data()
     field = data.get("onboarding_field")
     value = (message.text or "").strip()
-    await state.clear()
 
     if not value or not field:
+        await state.clear()
         await message.answer("Оставляю без изменений.")
         return
 
@@ -539,24 +562,33 @@ async def onboarding_review_edit(message: Message, state: FSMContext, db_user: d
     age = calculate_age(birthdate) if birthdate else None
     age_months = age.months if age else 12
 
-    # Валидация через Haiku
+    # Валидация через Haiku (state НЕ очищаем до результата)
     result = await validate_onboarding_answer(
         "Обновление информации", value, age_months, field
     )
 
+    if result.cost_usd > 0:
+        await db.add_token_usage(
+            user_id=message.from_user.id,
+            model="claude-haiku-4-5-20251001",
+            input_tokens=0, output_tokens=0,
+            cost_usd=result.cost_usd,
+        )
+
     if result.reason == "skip":
+        await state.clear()
         await message.answer("Оставляю без изменений.")
         return
 
     if not result.is_valid:
+        # Оставляем state — юзер ещё отвечает
         await message.answer(
             f"Хм, кажется что-то не так: <i>{result.reason}</i>\n"
             "Попробуй ещё раз или напиши «пропустить»."
         )
-        await state.set_state(OnboardingPrompt.waiting_review_edit)
-        await state.update_data(onboarding_field=field)
         return
 
+    await state.clear()
     normalized = result.normalized
     context = update_context_field(context, field, normalized)
     await db.set_child_context(message.from_user.id, context)
@@ -568,7 +600,7 @@ async def onboarding_review_edit(message: Message, state: FSMContext, db_user: d
     }
     label = field_labels.get(field, field)
     await message.answer(
-        f"Обновила <b>{label}</b> {child_name}:\n"
+        f"Обновлено (<b>{label}</b>) {child_name}:\n"
         f"<i>{normalized}</i>\n\n"
         f"Учту в следующих ответах :)"
     )

@@ -1,3 +1,4 @@
+import json
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -364,12 +365,11 @@ async def validate_onboarding_answer(
         )
 
         # Парсим JSON-ответ
-        import json as _json
         # Извлекаем JSON из ответа (на случай если Haiku добавит обёртку)
         start = raw.find("{")
         end = raw.rfind("}") + 1
         if start >= 0 and end > start:
-            data = _json.loads(raw[start:end])
+            data = json.loads(raw[start:end])
         else:
             # Не удалось распарсить — принимаем как есть
             return ValidationResult(True, answer.strip(), "", cost)

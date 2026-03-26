@@ -159,6 +159,12 @@ def confirm_delete_keyboard(book_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def onboarding_skip_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Пропустить", callback_data="onboarding:skip")
+    return builder.as_markup()
+
+
 def review_keyboard(field: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Актуально", callback_data=f"review:keep:{field}")

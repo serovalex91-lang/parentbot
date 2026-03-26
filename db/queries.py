@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 import aiosqlite
 
@@ -128,8 +129,8 @@ async def set_child_context(telegram_id: int, context: Dict):
 async def set_last_onboarding_prompt(telegram_id: int):
     db = await get_db()
     await db.execute(
-        "UPDATE users SET last_onboarding_prompt = datetime('now') WHERE id = ?",
-        (telegram_id,),
+        "UPDATE users SET last_onboarding_prompt = ? WHERE id = ?",
+        (datetime.utcnow().isoformat(), telegram_id),
     )
     await db.commit()
 

@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
     is_active       INTEGER DEFAULT 1,
     search_mode     TEXT DEFAULT 'kb_only' CHECK(search_mode IN ('kb_only', 'kb_internet')),
     created_at      TEXT DEFAULT (datetime('now')),
-    onboarded_at    TEXT
+    onboarded_at    TEXT,
+    last_onboarding_prompt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (

@@ -12,7 +12,7 @@ from services.brave_search import search_brave
 from services.onboarding import should_prompt, pick_onboarding_action
 from utils.text_helpers import split_long_message
 from utils.thinking import ThinkingIndicator
-from keyboards.main_kb import review_keyboard
+from keyboards.main_kb import review_keyboard, onboarding_skip_keyboard
 from states.fsm import OnboardingPrompt
 import db.queries as db
 import asyncio
@@ -239,7 +239,7 @@ async def _maybe_onboarding_prompt(
             onboarding_field=action["field"],
             onboarding_question=action["question"],
         )
-        await message.answer(text)
+        await message.answer(text, reply_markup=onboarding_skip_keyboard())
         await db.set_last_onboarding_prompt(message.from_user.id)
 
     elif action["type"] == "review":

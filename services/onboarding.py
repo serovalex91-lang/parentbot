@@ -269,7 +269,14 @@ def get_review_question(
     if not stale_fields:
         return None
 
-    # Сортируем по старости (самые старые первыми)
+    # Сортируем по старости (самые старые первыми, "дата неизвестна" — в начало)
+    def _sort_key(item):
+        date_str = item[3]
+        if date_str == "дата неизвестна":
+            return ""  # самый старый
+        return date_str  # DD.MM.YYYY — сортировка строковая, ок для одного формата
+
+    stale_fields.sort(key=_sort_key)
     return stale_fields[0]
 
 
