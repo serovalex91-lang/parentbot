@@ -84,6 +84,28 @@ CREATE TABLE IF NOT EXISTS access_requests (
 """
 
 
+async def _migrate_add_onboarding_prompt(db):
+    """Добавляет last_onboarding_prompt в таблицу users."""
+    async with db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        return
+    ddl = row[0]
+    if "last_onboarding_prompt" in ddl:
+        return  # уже мигрировано
+    logger.info("Миграция: добавляю last_onboarding_prompt в users...")
+    try:
+        await db.execute(
+            "ALTER TABLE users ADD COLUMN last_onboarding_prompt TEXT"
+        )
+        await db.commit()
+        logger.info("Миграция last_onboarding_prompt завершена")
+    except Exception as e:
+        logger.warning("Миграция last_onboarding_prompt: {}", e)
+
+
 async def _migrate_role_constraint(db):
     """Расширяет CHECK constraint для role — добавляет grandma, grandpa, relative."""
     async with db.execute(
@@ -114,6 +136,7 @@ async def init_db(db_path: str, admin_id: int, whitelist_ids: List[int]):
         await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript(SCHEMA)
         await _migrate_role_constraint(db)
+        await _migrate_add_onboarding_prompt(db)
 
         for tg_id in whitelist_ids:
             await db.execute(

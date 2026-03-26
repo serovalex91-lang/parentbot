@@ -125,6 +125,15 @@ async def set_child_context(telegram_id: int, context: Dict):
     await db.commit()
 
 
+async def set_last_onboarding_prompt(telegram_id: int):
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET last_onboarding_prompt = datetime('now') WHERE id = ?",
+        (telegram_id,),
+    )
+    await db.commit()
+
+
 async def get_all_active_users() -> List[Dict[str, Any]]:
     db = await get_db()
     async with db.execute(
