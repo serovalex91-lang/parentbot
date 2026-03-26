@@ -127,6 +127,75 @@ QUESTIONS_BY_AGE: Dict[str, List[Tuple[str, str]]] = {
 }
 
 
+async def _generate_smart_question(
+    context: dict, age_months: int, child_name: str, gender: str
+) -> Optional[Tuple[str, str]]:
+    """Генерирует контекстный вопрос через Haiku на основе уже известных данных."""
+    try:
+        from services.claude_client import get_client, MODEL_HAIKU, calculate_cost
+        import db.queries as db_queries
+    except Exception:
+        return None
+
+    known_parts = []
+    if context.get("child_features"):
+        known_parts.append(f"Особенности: {context['child_features']}")
+    if context.get("child_character"):
+        known_parts.append(f"Характер: {context['child_character']}")
+    if context.get("child_notes"):
+        known_parts.append(f"Заметки: {context['child_notes']}")
+    known_str = "\n".join(known_parts) if known_parts else "Пока ничего не записано."
+
+    name = child_name or "ребёнок"
+    gp = "мальчик" if gender == "boy" else ("девочка" if gender == "girl" else "ребёнок")
+
+    system = (
+        "Ты помощник родительского бота. Сгенерируй ОДИН короткий вопрос родителю "
+        "о ребёнке, чтобы узнать что-то новое и полезное для персонализации советов.\n\n"
+        f"Ребёнок: {name}, {gp}, {age_months} месяцев.\n"
+        f"Уже известно:\n{known_str}\n\n"
+        "Правила:\n"
+        "1. Вопрос должен быть НОВЫМ — не дублировать то, что уже известно.\n"
+        "2. Подходить по возрасту.\n"
+        "3. Быть конкретным, а не абстрактным.\n"
+        "4. Использовать имя ребёнка.\n"
+        "5. Формат ответа строго JSON:\n"
+        '{"field": "child_notes", "question": "текст вопроса"}\n'
+        'field — одно из: child_features, child_character, child_notes\n'
+        "Только JSON, ничего больше."
+    )
+
+    try:
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL_HAIKU,
+            max_tokens=150,
+            system=system,
+            messages=[{"role": "user", "content": "Сгенерируй вопрос."}],
+        )
+        raw = response.content[0].text.strip()
+        cost = calculate_cost(
+            MODEL_HAIKU, response.usage.input_tokens, response.usage.output_tokens
+        )
+        from loguru import logger
+        logger.info(
+            "Smart question gen: in={} out={} cost=${:.4f}",
+            response.usage.input_tokens, response.usage.output_tokens, cost,
+        )
+
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            data = json.loads(raw[start:end])
+            field = data.get("field", "child_notes")
+            question = data.get("question", "")
+            if field in ("child_features", "child_character", "child_notes") and question:
+                return (field, question)
+        return None
+    except Exception:
+        return None
+
+
 def _get_age_key(age_months: int) -> str:
     if age_months < 3:
         return "0-3"
@@ -185,10 +254,11 @@ def should_prompt(db_user: dict) -> bool:
         return True
 
 
-def get_fill_question(
+async def get_fill_question(
     db_user: dict, age_months: int
 ) -> Optional[Tuple[str, str, str]]:
     """Возвращает (field, question, disclaimer) для заполнения пустого поля.
+    Если банк исчерпан — генерирует вопрос через Haiku.
     None если нечего спрашивать."""
     context = {}
     if db_user.get("child_context"):
@@ -213,13 +283,17 @@ def get_fill_question(
 
     # Если все базовые заполнены — берём любой вопрос для обогащения
     if not candidates:
-        # Исключаем вопросы, ответы на которые уже есть в тексте полей
         candidates = [(f, q) for f, q in questions]
 
+    # Если банк исчерпан — генерируем через Haiku
     if not candidates:
-        return None
-
-    field, question = random.choice(candidates)
+        generated = await _generate_smart_question(context, age_months, child_name, gender)
+        if generated:
+            field, question = generated
+        else:
+            return None
+    else:
+        field, question = random.choice(candidates)
     question = _replace_placeholders(question, child_name, gender)
     disclaimer = random.choice(DISCLAIMERS)
     disclaimer = disclaimer.replace("{name}", child_name or "ребёнка")
@@ -280,7 +354,7 @@ def get_review_question(
     return stale_fields[0]
 
 
-def pick_onboarding_action(
+async def pick_onboarding_action(
     db_user: dict, age_months: int
 ) -> Optional[dict]:
     """Выбирает действие: fill или review.
@@ -297,8 +371,8 @@ def pick_onboarding_action(
             "date_str": date_str,
         }
 
-    # Потом заполнение
-    fill = get_fill_question(db_user, age_months)
+    # Потом заполнение (может вызвать Haiku если банк исчерпан)
+    fill = await get_fill_question(db_user, age_months)
     if fill:
         field, question, disclaimer = fill
         return {

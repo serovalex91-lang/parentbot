@@ -228,7 +228,7 @@ async def _maybe_onboarding_prompt(
     if not should_prompt(db_user):
         return
 
-    action = pick_onboarding_action(db_user, age.months)
+    action = await pick_onboarding_action(db_user, age.months)
     if not action:
         return
 
