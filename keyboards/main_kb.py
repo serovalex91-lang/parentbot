@@ -111,6 +111,7 @@ def profile_keyboard() -> InlineKeyboardMarkup:
     ]
     for label, field in fields:
         builder.button(text=f"{label} [изменить]", callback_data=f"profile_edit:{field}")
+    builder.button(text="📋 Сводка о ребёнке", callback_data="child_summary")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -155,6 +156,15 @@ def confirm_delete_keyboard(book_id: int) -> InlineKeyboardMarkup:
     builder.button(text="✅ Да, удалить", callback_data=f"book_delete_confirm:{book_id}")
     builder.button(text="❌ Отмена", callback_data="book_delete_cancel")
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def review_keyboard(field: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Актуально", callback_data=f"review:keep:{field}")
+    builder.button(text="Изменить", callback_data=f"review:edit:{field}")
+    builder.button(text="Убрать", callback_data=f"review:delete:{field}")
+    builder.adjust(3)
     return builder.as_markup()
 
 

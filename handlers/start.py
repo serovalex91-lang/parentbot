@@ -7,9 +7,10 @@ from aiogram import Bot
 from loguru import logger
 
 from config import Config
-from states.fsm import Onboarding, SetDate, EditProfile
+from states.fsm import Onboarding, SetDate, EditProfile, OnboardingPrompt
 from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
+from services.onboarding import update_context_field, remove_context_field, format_child_summary
 import db.queries as db
 
 router = Router()
@@ -393,9 +394,13 @@ async def profile_edit_save(message: Message, state: FSMContext, db_user: dict =
     context = _get_context(db_user)
 
     if value == "-":
-        context.pop(field, None)
+        context = remove_context_field(context, field)
     else:
-        context[field] = value
+        # Для полей с ревизией — ставим timestamp
+        if field in ("child_features", "child_character", "child_notes"):
+            context = update_context_field(context, field, value)
+        else:
+            context[field] = value
 
     await db.set_child_context(message.from_user.id, context)
     await state.clear()
@@ -416,6 +421,119 @@ async def process_gender(callback: CallbackQuery, db_user: dict = None):
         "Меню обновлено 👇",
         reply_markup=main_menu(search_mode, gender, db_user.get("role", "") if db_user else ""),
     )
+    await callback.answer()
+
+
+# ─── Onboarding: ответ на fill-вопрос ─────────────────────────────────────────
+
+@router.message(OnboardingPrompt.waiting_fill_answer)
+async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: dict = None):
+    data = await state.get_data()
+    field = data.get("onboarding_field")
+    value = (message.text or "").strip()
+    await state.clear()
+
+    if not value or not field:
+        await message.answer("Пропустим пока :)")
+        return
+
+    context = _get_context(db_user)
+    child_name = context.get("child_name", "ребёнка")
+
+    # Если поле уже заполнено — дополняем, а не перезаписываем
+    existing = context.get(field, "")
+    if existing:
+        context[field] = f"{existing}; {value}"
+    else:
+        context[field] = value
+
+    context = update_context_field(context, field, context[field])
+    await db.set_child_context(message.from_user.id, context)
+
+    field_labels = {
+        "child_features": "особенности",
+        "child_character": "характер",
+        "child_notes": "заметки",
+    }
+    label = field_labels.get(field, field)
+    await message.answer(
+        f"Записала в профиль {child_name} ({label}).\n"
+        f"Это поможет давать более точные ответы :)"
+    )
+
+
+# ─── Onboarding: ревизия (review) ───────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("review:"))
+async def process_review(callback: CallbackQuery, state: FSMContext, db_user: dict = None):
+    parts = callback.data.split(":")
+    action = parts[1]   # keep, edit, delete
+    field = parts[2]
+
+    context = _get_context(db_user)
+    child_name = context.get("child_name", "ребёнка")
+
+    if action == "keep":
+        # Обновляем только timestamp
+        context = update_context_field(context, field, context.get(field, ""))
+        await db.set_child_context(callback.from_user.id, context)
+        await callback.message.edit_text("Отлично, оставляю как есть.")
+        await callback.answer()
+
+    elif action == "delete":
+        context = remove_context_field(context, field)
+        await db.set_child_context(callback.from_user.id, context)
+        await callback.message.edit_text(f"Убрала из профиля {child_name}.")
+        await callback.answer()
+
+    elif action == "edit":
+        await state.set_state(OnboardingPrompt.waiting_review_edit)
+        await state.update_data(onboarding_field=field)
+        await callback.message.edit_text("Напиши новое значение:")
+        await callback.answer()
+
+
+@router.message(OnboardingPrompt.waiting_review_edit)
+async def onboarding_review_edit(message: Message, state: FSMContext, db_user: dict = None):
+    data = await state.get_data()
+    field = data.get("onboarding_field")
+    value = (message.text or "").strip()
+    await state.clear()
+
+    if not value or not field:
+        await message.answer("Оставляю без изменений.")
+        return
+
+    context = _get_context(db_user)
+    child_name = context.get("child_name", "ребёнка")
+    context = update_context_field(context, field, value)
+    await db.set_child_context(message.from_user.id, context)
+
+    field_labels = {
+        "child_features": "особенности",
+        "child_character": "характер",
+        "child_notes": "заметки",
+    }
+    label = field_labels.get(field, field)
+    await message.answer(
+        f"Обновила: {label} — <i>{value}</i>"
+    )
+
+
+# ─── Сводка о ребёнке (экспорт) ─────────────────────────────────────────────
+
+@router.callback_query(F.data == "child_summary")
+async def child_summary_handler(callback: CallbackQuery, db_user: dict = None):
+    if not db_user:
+        await callback.answer("Сначала пройди настройку")
+        return
+
+    birthdate = db_user.get("child_birthdate", "")
+    age = calculate_age(birthdate) if birthdate else None
+    age_display = age.display if age else ""
+
+    summary = format_child_summary(db_user, age_display)
+    await callback.message.answer(summary)
     await callback.answer()
 
 

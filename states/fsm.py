@@ -18,6 +18,11 @@ class SetDate(StatesGroup):
     waiting_birthdate = State()
 
 
+class OnboardingPrompt(StatesGroup):
+    waiting_fill_answer = State()    # Ожидание ответа на onboarding-вопрос
+    waiting_review_edit = State()    # Ожидание нового значения при ревизии
+
+
 class AdminPanel(StatesGroup):
     waiting_add_id = State()
     waiting_remove_id = State()

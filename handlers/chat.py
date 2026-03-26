@@ -1,6 +1,7 @@
 import json
 from aiogram import Router, F, Bot
 from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
 from loguru import logger
 
 from config import Config
@@ -8,8 +9,11 @@ from utils.age_calc import calculate_age
 from kb.rag_engine import search_kb, format_chunks_for_prompt
 from services.claude_client import ask_claude
 from services.brave_search import search_brave
+from services.onboarding import should_prompt, pick_onboarding_action
 from utils.text_helpers import split_long_message
 from utils.thinking import ThinkingIndicator
+from keyboards.main_kb import review_keyboard
+from states.fsm import OnboardingPrompt
 import db.queries as db
 import asyncio
 
@@ -27,6 +31,7 @@ def _get_gender(db_user: dict) -> str:
 
 
 async def _get_child_context_str(db_user: dict) -> str:
+    """Формирует контекст о ребёнке для system prompt (без служебных полей)."""
     if not db_user or not db_user.get("child_context"):
         return ""
     try:
@@ -40,6 +45,7 @@ async def _get_child_context_str(db_user: dict) -> str:
             parts.append(f"Характер: {ctx['child_character']}")
         if ctx.get("child_notes"):
             parts.append(f"Заметки: {ctx['child_notes']}")
+        # _timestamps не включаем — служебное поле, экономим токены
         return "\n".join(parts)
     except Exception:
         return ""
@@ -74,7 +80,12 @@ async def ask_question_prompt(message: Message):
 # ─── Основной чат ─────────────────────────────────────────────────────────────
 
 @router.message(F.text & ~F.text.startswith("/"))
-async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user: dict = None):
+async def handle_chat(message: Message, bot: Bot, state: FSMContext, config: Config = None, db_user: dict = None):
+    # Не перехватываем если юзер отвечает на onboarding-вопрос
+    current_state = await state.get_state()
+    if current_state and current_state.startswith("OnboardingPrompt:"):
+        return
+
     if not db_user:
         await message.answer("Сначала пройди настройку через /start")
         return
@@ -203,6 +214,40 @@ async def handle_chat(message: Message, bot: Bot, config: Config = None, db_user
 
     for part in split_long_message(response_text):
         await message.answer(part)
+
+    # Onboarding prompt — после основного ответа
+    await _maybe_onboarding_prompt(message, state, db_user, age)
+
+
+async def _maybe_onboarding_prompt(
+    message: Message, state: FSMContext, db_user: dict, age
+):
+    """Проверяет нужно ли показать onboarding-вопрос после ответа."""
+    if not age or not db_user:
+        return
+    if not should_prompt(db_user):
+        return
+
+    action = pick_onboarding_action(db_user, age.months)
+    if not action:
+        return
+
+    if action["type"] == "fill":
+        text = f"{action['disclaimer']}\n\n{action['question']}"
+        await state.set_state(OnboardingPrompt.waiting_fill_answer)
+        await state.update_data(onboarding_field=action["field"])
+        await message.answer(text)
+        await db.set_last_onboarding_prompt(message.from_user.id)
+
+    elif action["type"] == "review":
+        text = (
+            f"У меня записано про <b>{action['label'].lower()}</b>:\n"
+            f"<i>«{action['value']}»</i>\n"
+            f"(от {action['date_str']})\n\n"
+            "Всё ещё актуально?"
+        )
+        await message.answer(text, reply_markup=review_keyboard(action["field"]))
+        await db.set_last_onboarding_prompt(message.from_user.id)
 
 
 def _validate_history(history: list) -> list:
