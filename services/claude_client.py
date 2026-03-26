@@ -182,7 +182,11 @@ def _build_system_prompt(
 
     child_context_block = ""
     if child_context:
-        child_context_block = f"\nЛичные данные о ребёнке:\n{child_context}\n"
+        child_context_block = (
+            f"\nЛИЧНЫЕ ДАННЫЕ О РЕБЁНКЕ (заполнены родителем):\n{child_context}\n"
+            "Используй эти данные для персонализации ответа — не переспрашивай то, что уже указано. "
+            "Данные могут быть субъективны или слегка устареть. Опирайся на них как на контекст, не как на диагноз.\n"
+        )
 
     kb_block = ""
     if kb_chunks:
