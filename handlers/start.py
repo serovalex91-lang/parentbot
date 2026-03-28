@@ -127,10 +127,16 @@ async def process_role(callback: CallbackQuery, state: FSMContext):
         "papa": "Папа 👨", "mama": "Мама 👩", "both": "Оба родителя 👫",
         "grandpa": "Дедушка 👴", "grandma": "Бабушка 👵", "relative": "Родственник 👪",
     }
+    db_user = await db.get_user(callback.from_user.id)
+    old_role = db_user.get("role") if db_user else None
+
     await db.set_user_role(callback.from_user.id, role)
 
     db_user = await db.get_user(callback.from_user.id)
     if db_user and db_user.get("onboarded_at"):
+        # При смене роли очищаем историю чата, чтобы Claude не путал контекст
+        if old_role and old_role != role:
+            await db.clear_messages(callback.from_user.id)
         await state.clear()
         await callback.message.edit_text(
             f"✅ Роль изменена: <b>{role_names.get(role, role)}</b>"

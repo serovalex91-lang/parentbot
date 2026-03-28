@@ -209,6 +209,13 @@ async def get_last_messages(
     return result
 
 
+async def clear_messages(user_id: int):
+    """Полная очистка истории сообщений пользователя (при смене роли и т.п.)."""
+    db = await get_db()
+    await db.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
+    await db.commit()
+
+
 async def prune_old_messages(user_id: int, keep: int = 100):
     """Удаляет старые сообщения, оставляя последние keep штук."""
     db = await get_db()
