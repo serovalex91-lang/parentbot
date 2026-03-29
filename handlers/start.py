@@ -8,9 +8,9 @@ from loguru import logger
 
 from config import Config
 from states.fsm import Onboarding, SetDate, EditProfile, OnboardingPrompt
-from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard
+from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard, onboarding_skip_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
-from services.onboarding import update_context_field, remove_context_field, format_child_summary
+from services.onboarding import update_context_field, remove_context_field, format_child_summary, get_fill_question
 from services.claude_client import validate_onboarding_answer
 import db.queries as db
 
@@ -184,6 +184,45 @@ async def process_birthdate(message: Message, state: FSMContext):
             gender,
             db_user.get("role", "") if db_user else "",
         ),
+    )
+
+
+# ─── /fillprofile — ручной онбординг ─────────────────────────────────────────
+
+@router.message(Command("fillprofile"))
+async def cmd_fillprofile(message: Message, state: FSMContext, db_user: dict = None):
+    if not db_user:
+        await message.answer("Сначала пройди настройку через /start")
+        return
+
+    if not db_user.get("child_birthdate"):
+        await message.answer("Сначала укажи дату рождения ребёнка через /setdate")
+        return
+
+    age = calculate_age(db_user["child_birthdate"])
+    if not age:
+        await message.answer("Не могу рассчитать возраст. Проверь дату через /setdate")
+        return
+
+    question = await get_fill_question(db_user, age.months)
+    if not question:
+        await message.answer("Все вопросы уже заданы — профиль заполнен :)")
+        return
+
+    field, q_text, disclaimer = question
+    await state.set_state(OnboardingPrompt.waiting_fill_answer)
+    await state.update_data(
+        onboarding_field=field,
+        onboarding_question=q_text,
+        manual_mode=True,
+        asked_questions=[q_text],
+        questions_answered=0,
+    )
+    await message.answer(
+        f"{disclaimer}\n\n{q_text}\n\n"
+        "<i>Отвечай на вопросы — я буду задавать следующий. "
+        "Нажми «Пропустить» когда захочешь остановиться.</i>",
+        reply_markup=onboarding_skip_keyboard(),
     )
 
 
@@ -435,8 +474,17 @@ async def process_gender(callback: CallbackQuery, db_user: dict = None):
 
 @router.callback_query(F.data == "onboarding:skip")
 async def onboarding_skip(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    manual_mode = data.get("manual_mode", False)
+    answered = data.get("questions_answered", 0)
     await state.clear()
-    await callback.message.edit_text("Пропустим пока :)")
+    if manual_mode and answered > 0:
+        await callback.message.edit_text(
+            f"Онбординг завершён — ответов: <b>{answered}</b>. "
+            f"Профиль стал полнее, буду учитывать в ответах :)"
+        )
+    else:
+        await callback.message.edit_text("Пропустим пока :)")
     await callback.answer()
 
 
@@ -507,6 +555,50 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
         "child_notes": "заметки",
     }
     label = field_labels.get(field, field)
+
+    # Ручной онбординг — сразу задаём следующий вопрос
+    manual_mode = data.get("manual_mode", False)
+    if manual_mode:
+        asked = data.get("asked_questions", [])
+        answered = data.get("questions_answered", 0) + 1
+
+        # Перечитываем юзера из БД — контекст обновился
+        db_user_fresh = await db.get_user(message.from_user.id)
+        birthdate = db_user_fresh.get("child_birthdate", "") if db_user_fresh else ""
+        age_fresh = calculate_age(birthdate) if birthdate else None
+
+        next_q = None
+        if age_fresh:
+            next_q = await get_fill_question(
+                db_user_fresh, age_fresh.months, exclude_questions=set(asked)
+            )
+
+        if next_q:
+            next_field, next_text, next_disclaimer = next_q
+            asked.append(next_text)
+            await state.set_state(OnboardingPrompt.waiting_fill_answer)
+            await state.update_data(
+                onboarding_field=next_field,
+                onboarding_question=next_text,
+                manual_mode=True,
+                asked_questions=asked,
+                questions_answered=answered,
+            )
+            await message.answer(
+                f"Записано (<b>{label}</b>): <i>{normalized}</i>\n\n"
+                f"{next_disclaimer}\n\n{next_text}",
+                reply_markup=onboarding_skip_keyboard(),
+            )
+            return
+        else:
+            # Вопросы закончились
+            await message.answer(
+                f"Записано (<b>{label}</b>): <i>{normalized}</i>\n\n"
+                f"Все вопросы пройдены — ответов: <b>{answered}</b>. "
+                f"Профиль стал намного полнее, буду учитывать в ответах :)"
+            )
+            return
+
     await message.answer(
         f"Записано в профиль {child_name} (<b>{label}</b>):\n"
         f"<i>{normalized}</i>\n\n"

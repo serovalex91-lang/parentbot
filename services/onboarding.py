@@ -268,10 +268,11 @@ def should_prompt(db_user: dict) -> bool:
 
 
 async def get_fill_question(
-    db_user: dict, age_months: int
+    db_user: dict, age_months: int, exclude_questions: set = None
 ) -> Optional[Tuple[str, str, str]]:
     """Возвращает (field, question, disclaimer) для заполнения пустого поля.
     Если банк исчерпан — генерирует вопрос через Haiku.
+    exclude_questions — множество уже заданных вопросов (для ручного онбординга).
     None если нечего спрашивать."""
     context = {}
     if db_user.get("child_context"):
@@ -284,6 +285,7 @@ async def get_fill_question(
     gender = context.get("child_gender", "")
     age_key = _get_age_key(age_months)
     questions = QUESTIONS_BY_AGE.get(age_key, [])
+    exclude = exclude_questions or set()
 
     # Поля, которые ещё пустые — приоритет
     empty_fields = []
@@ -291,12 +293,12 @@ async def get_fill_question(
         if not context.get(field):
             empty_fields.append(field)
 
-    # Фильтруем вопросы для пустых полей
-    candidates = [(f, q) for f, q in questions if f in empty_fields]
+    # Фильтруем вопросы для пустых полей (исключая уже заданные)
+    candidates = [(f, q) for f, q in questions if f in empty_fields and q not in exclude]
 
     # Если все базовые заполнены — берём любой вопрос для обогащения
     if not candidates:
-        candidates = [(f, q) for f, q in questions]
+        candidates = [(f, q) for f, q in questions if q not in exclude]
 
     # Если банк исчерпан — генерируем через Haiku
     if not candidates:
