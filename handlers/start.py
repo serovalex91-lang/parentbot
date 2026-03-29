@@ -529,10 +529,15 @@ async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext,
         await callback.answer("Ошибка выбора")
         return
 
-    # Сохраняем выбранное значение
+    # Сохраняем выбранное значение (без дубликатов)
     context = _get_context(db_user)
     existing = context.get(field, "")
-    final_value = f"{existing}; {value}" if existing else value
+    if existing and value.lower() in existing.lower():
+        final_value = existing  # уже есть
+    elif existing:
+        final_value = f"{existing}; {value}"
+    else:
+        final_value = value
     context = update_context_field(context, field, final_value)
     await db.set_child_context(callback.from_user.id, context)
 
@@ -621,6 +626,12 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
         await message.answer("Пропустим пока :)")
         return
 
+    # Фильтрация команд — не сохранять /admin, /start и т.д. как ответы
+    if value.startswith("/"):
+        await state.clear()
+        await message.answer("Это похоже на команду, а не на ответ. Пропускаю вопрос.")
+        return
+
     context = _get_context(db_user)
     child_name = context.get("child_name", "ребёнка")
 
@@ -658,9 +669,11 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     await state.clear()
     normalized = result.normalized
 
-    # Если поле уже заполнено — дополняем
+    # Если поле уже заполнено — дополняем (без дубликатов)
     existing = context.get(field, "")
-    if existing:
+    if existing and normalized.lower() in existing.lower():
+        final_value = existing  # уже есть
+    elif existing:
         final_value = f"{existing}; {normalized}"
     else:
         final_value = normalized

@@ -346,14 +346,14 @@ def _get_age_key(age_months: int) -> str:
 
 def _decline_name(name: str, case: str, gender: str = "") -> str:
     """Склоняет имя в нужный падеж.
-    case: 'gen' (родительный), 'dat' (дательный), 'acc' (винительный)
+    case: 'gen' (родительный), 'dat' (дательный), 'acc' (винительный), 'prep' (предложный)
     """
     if not name:
         return name
 
     # Специальный случай: "ребёнок"
     if name == "ребёнок":
-        return {"gen": "ребёнка", "dat": "ребёнку", "acc": "ребёнка"}.get(case, name)
+        return {"gen": "ребёнка", "dat": "ребёнку", "acc": "ребёнка", "prep": "ребёнке"}.get(case, name)
     if name == "ребёнка":
         return name  # уже в косвенном падеже
 
@@ -363,11 +363,10 @@ def _decline_name(name: str, case: str, gender: str = "") -> str:
     if last == 'а':
         stem = name[:-1]
         if case == 'gen':
-            # жка→жки, шка→шки и т.д.
             if prelast in 'кгхжшщч':
                 return stem + 'и'
             return stem + 'ы'
-        elif case == 'dat':
+        elif case in ('dat', 'prep'):
             return stem + 'е'
         elif case == 'acc':
             return stem + 'у'
@@ -376,7 +375,7 @@ def _decline_name(name: str, case: str, gender: str = "") -> str:
         stem = name[:-1]
         if case == 'gen':
             return stem + 'и'
-        elif case == 'dat':
+        elif case in ('dat', 'prep'):
             return stem + 'е'
         elif case == 'acc':
             return stem + 'ю'
@@ -389,15 +388,15 @@ def _decline_name(name: str, case: str, gender: str = "") -> str:
             return stem + 'ю'
         elif case == 'acc':
             return stem + 'я'
+        elif case == 'prep':
+            return stem + 'е'
 
     elif last == 'ь':
         stem = name[:-1]
         if gender == 'girl':
-            # Любовь → Любови
-            return {"gen": stem + "и", "dat": stem + "и", "acc": name}.get(case, name)
+            return {"gen": stem + "и", "dat": stem + "и", "acc": name, "prep": stem + "и"}.get(case, name)
         else:
-            # Игорь → Игоря
-            return {"gen": stem + "я", "dat": stem + "ю", "acc": stem + "я"}.get(case, name)
+            return {"gen": stem + "я", "dat": stem + "ю", "acc": stem + "я", "prep": stem + "е"}.get(case, name)
 
     elif last in 'бвгджзклмнпрстфхцчшщ':
         # Мужское имя на согласную: Артём → Артёма
@@ -407,6 +406,8 @@ def _decline_name(name: str, case: str, gender: str = "") -> str:
             return name + 'у'
         elif case == 'acc':
             return name + 'а'
+        elif case == 'prep':
+            return name + 'е'
 
     return name
 
@@ -418,12 +419,14 @@ def _replace_placeholders(text: str, child_name: str, gender: str) -> str:
     name_gen = _decline_name(name, "gen", gender)
     name_dat = _decline_name(name, "dat", gender)
     name_acc = _decline_name(name, "acc", gender)
+    name_prep = _decline_name(name, "prep", gender)
 
     return (
         text
         .replace("{name_gen}", name_gen)
         .replace("{name_dat}", name_dat)
         .replace("{name_acc}", name_acc)
+        .replace("{name_prep}", name_prep)
         .replace("{name}", name)
         .replace("{gp}", gp)
     )
@@ -675,11 +678,13 @@ def format_child_summary(db_user: dict, age_display: str = "") -> str:
             pass
 
     child_name = context.get("child_name", "ребёнок")
+    child_gender = context.get("child_gender", "")
     gender_map = {"boy": "мальчик", "girl": "девочка"}
-    gender = gender_map.get(context.get("child_gender", ""), "")
+    gender = gender_map.get(child_gender, "")
 
+    name_prep = _decline_name(child_name, "prep", child_gender)
     parts = []
-    header = f"<b>Всё о {child_name}</b>"
+    header = f"<b>Всё о {name_prep}</b>"
     if age_display:
         header += f" ({age_display})"
     if gender:
