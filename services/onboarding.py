@@ -423,11 +423,14 @@ async def get_fill_question(
             empty_fields.append(field)
 
     # Фильтруем вопросы для пустых полей (исключая уже заданные)
-    candidates = [(f, q) for f, q in questions if f in empty_fields and q not in exclude]
+    # exclude содержит вопросы после замены плейсхолдеров, поэтому сравниваем тоже после замены
+    candidates = [(f, q) for f, q in questions
+                  if f in empty_fields and _replace_placeholders(q, child_name, gender) not in exclude]
 
     # Если все базовые заполнены — берём любой вопрос для обогащения
     if not candidates:
-        candidates = [(f, q) for f, q in questions if q not in exclude]
+        candidates = [(f, q) for f, q in questions
+                      if _replace_placeholders(q, child_name, gender) not in exclude]
 
     # Если банк исчерпан — генерируем через Haiku
     if not candidates:
