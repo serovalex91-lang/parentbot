@@ -479,8 +479,9 @@ def should_prompt(db_user: dict) -> bool:
 
 async def get_fill_question(
     db_user: dict, age_months: int, exclude_questions: set = None
-) -> Optional[Tuple[str, str, str, Optional[List[Tuple[str, str, str]]]]]:
-    """Возвращает (field, question, disclaimer, options) для заполнения пустого поля.
+) -> Optional[Tuple[str, str, str, Optional[List[Tuple[str, str, str]]], str]]:
+    """Возвращает (field, question, disclaimer, options, template) для заполнения пустого поля.
+    template — оригинальный шаблон вопроса (для сохранения в историю).
     options — список (value, label, hint) или None для свободного ввода.
     Если банк исчерпан — генерирует вопрос через Haiku.
     exclude_questions — множество уже заданных вопросов (для ручного онбординга).
@@ -496,7 +497,11 @@ async def get_fill_question(
     gender = context.get("child_gender", "")
     age_key = _get_age_key(age_months)
     questions = QUESTIONS_BY_AGE.get(age_key, [])
-    exclude = exclude_questions or set()
+
+    # Объединяем exclude из аргумента + историю из child_context
+    exclude = set(exclude_questions or set())
+    asked_history = set(context.get("_asked_questions", []))
+    exclude.update(asked_history)
 
     # Поля, которые ещё пустые — приоритет
     empty_fields = []
@@ -505,14 +510,14 @@ async def get_fill_question(
             empty_fields.append(field)
 
     # Фильтруем вопросы для пустых полей (исключая уже заданные)
-    # exclude содержит вопросы после замены плейсхолдеров, поэтому сравниваем тоже после замены
+    # exclude содержит шаблоны вопросов (до замены плейсхолдеров)
     candidates = [(f, q) for f, q in questions
-                  if f in empty_fields and _replace_placeholders(q, child_name, gender) not in exclude]
+                  if f in empty_fields and q not in exclude]
 
     # Если все базовые заполнены — берём любой вопрос для обогащения
     if not candidates:
         candidates = [(f, q) for f, q in questions
-                      if _replace_placeholders(q, child_name, gender) not in exclude]
+                      if q not in exclude]
 
     # Если банк исчерпан — генерируем через Haiku
     if not candidates:
@@ -530,7 +535,7 @@ async def get_fill_question(
     disclaimer = random.choice(DISCLAIMERS)
     disclaimer = _replace_placeholders(disclaimer, child_name, gender)
 
-    return field, question, disclaimer, options
+    return field, question, disclaimer, options, question_template
 
 
 def get_review_question(
@@ -610,13 +615,14 @@ async def pick_onboarding_action(
     if prompts_done < FAST_PROMPTS_COUNT:
         fill = await get_fill_question(db_user, age_months)
         if fill:
-            field, question, disclaimer, options = fill
+            field, question, disclaimer, options, template = fill
             return {
                 "type": "fill",
                 "field": field,
                 "question": question,
                 "disclaimer": disclaimer,
                 "options": options,
+                "template": template,
             }
         return None
 
@@ -640,15 +646,25 @@ async def pick_onboarding_action(
         # Последний был review (или первый раз) → новый вопрос
         fill = await get_fill_question(db_user, age_months)
         if fill:
-            field, question, disclaimer, options = fill
+            field, question, disclaimer, options, template = fill
             return {
                 "type": "fill",
                 "field": field,
                 "question": question,
                 "disclaimer": disclaimer,
                 "options": options,
+                "template": template,
             }
         return None
+
+
+def mark_question_asked(context: dict, question_template: str) -> dict:
+    """Записывает шаблон вопроса в историю, чтобы не повторять."""
+    if "_asked_questions" not in context:
+        context["_asked_questions"] = []
+    if question_template not in context["_asked_questions"]:
+        context["_asked_questions"].append(question_template)
+    return context
 
 
 def update_context_field(context: dict, field: str, value: str) -> dict:

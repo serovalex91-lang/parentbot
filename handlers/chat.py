@@ -9,7 +9,7 @@ from utils.age_calc import calculate_age
 from kb.rag_engine import search_kb, format_chunks_for_prompt
 from services.claude_client import ask_claude
 from services.brave_search import search_brave
-from services.onboarding import should_prompt, pick_onboarding_action
+from services.onboarding import should_prompt, pick_onboarding_action, mark_question_asked
 from utils.text_helpers import split_long_message
 from utils.thinking import ThinkingIndicator
 from keyboards.main_kb import review_keyboard, onboarding_skip_keyboard, onboarding_options_keyboard
@@ -257,11 +257,21 @@ async def _maybe_onboarding_prompt(
     if action["type"] == "fill":
         text = f"{action['disclaimer']}\n\n{action['question']}"
         options = action.get("options")
+        template = action.get("template", "")
+
+        # Помечаем вопрос как заданный в истории
+        if template:
+            context["_asked_questions"] = context.get("_asked_questions", [])
+            if template not in context["_asked_questions"]:
+                context["_asked_questions"].append(template)
+            await db.set_child_context(message.from_user.id, context)
+
         await state.set_state(OnboardingPrompt.waiting_fill_answer)
         await state.update_data(
             onboarding_field=action["field"],
             onboarding_question=action["question"],
             onboarding_options=options,
+            onboarding_template=template,
         )
         if options:
             # Добавляем подсказки к вопросу

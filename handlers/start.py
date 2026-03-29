@@ -10,7 +10,7 @@ from config import Config
 from states.fsm import Onboarding, SetDate, EditProfile, OnboardingPrompt
 from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard, onboarding_skip_keyboard, onboarding_options_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
-from services.onboarding import update_context_field, remove_context_field, format_child_summary, get_fill_question
+from services.onboarding import update_context_field, remove_context_field, format_child_summary, get_fill_question, mark_question_asked
 from services.claude_client import validate_onboarding_answer
 import db.queries as db
 
@@ -209,12 +209,19 @@ async def cmd_fillprofile(message: Message, state: FSMContext, db_user: dict = N
         await message.answer("Все вопросы уже заданы — профиль заполнен :)")
         return
 
-    field, q_text, disclaimer, options = result
+    field, q_text, disclaimer, options, template = result
+
+    # Сразу помечаем вопрос как заданный в истории
+    context = _get_context(db_user)
+    context = mark_question_asked(context, template)
+    await db.set_child_context(message.from_user.id, context)
+
     await state.set_state(OnboardingPrompt.waiting_fill_answer)
     await state.update_data(
         onboarding_field=field,
         onboarding_question=q_text,
         onboarding_options=options,
+        onboarding_template=template,
         manual_mode=True,
         asked_questions=[q_text],
         questions_answered=0,
@@ -565,13 +572,20 @@ async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext,
             )
 
         if next_q:
-            next_field, next_text, next_disclaimer, next_options = next_q
+            next_field, next_text, next_disclaimer, next_options, next_template = next_q
             asked.append(next_text)
+
+            # Помечаем вопрос как заданный
+            ctx_fresh = _get_context(db_user_fresh) if db_user_fresh else {}
+            ctx_fresh = mark_question_asked(ctx_fresh, next_template)
+            await db.set_child_context(callback.from_user.id, ctx_fresh)
+
             await state.set_state(OnboardingPrompt.waiting_fill_answer)
             await state.update_data(
                 onboarding_field=next_field,
                 onboarding_question=next_text,
                 onboarding_options=next_options,
+                onboarding_template=next_template,
                 manual_mode=True,
                 asked_questions=asked,
                 questions_answered=answered,
@@ -706,13 +720,20 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
             )
 
         if next_q:
-            next_field, next_text, next_disclaimer, next_options = next_q
+            next_field, next_text, next_disclaimer, next_options, next_template = next_q
             asked.append(next_text)
+
+            # Помечаем вопрос как заданный
+            ctx_fresh = _get_context(db_user_fresh) if db_user_fresh else {}
+            ctx_fresh = mark_question_asked(ctx_fresh, next_template)
+            await db.set_child_context(message.from_user.id, ctx_fresh)
+
             await state.set_state(OnboardingPrompt.waiting_fill_answer)
             await state.update_data(
                 onboarding_field=next_field,
                 onboarding_question=next_text,
                 onboarding_options=next_options,
+                onboarding_template=next_template,
                 manual_mode=True,
                 asked_questions=asked,
                 questions_answered=answered,
@@ -886,12 +907,18 @@ async def start_fillprofile_callback(callback: CallbackQuery, state: FSMContext,
         await callback.message.answer("Все вопросы уже заданы — профиль заполнен :)")
         return
 
-    field, q_text, disclaimer, options = result
+    field, q_text, disclaimer, options, template = result
+
+    context = _get_context(db_user)
+    context = mark_question_asked(context, template)
+    await db.set_child_context(callback.from_user.id, context)
+
     await state.set_state(OnboardingPrompt.waiting_fill_answer)
     await state.update_data(
         onboarding_field=field,
         onboarding_question=q_text,
         onboarding_options=options,
+        onboarding_template=template,
         manual_mode=True,
         asked_questions=[q_text],
         questions_answered=0,
