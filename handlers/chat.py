@@ -230,7 +230,29 @@ async def _maybe_onboarding_prompt(
 
     action = await pick_onboarding_action(db_user, age.months)
     if not action:
+        # Review пропущен (нет устаревших) — сбрасываем тип,
+        # чтобы следующий промпт был fill
+        context = {}
+        if db_user.get("child_context"):
+            try:
+                context = json.loads(db_user["child_context"])
+            except Exception:
+                pass
+        if context.get("_last_prompt_type") == "fill":
+            context["_last_prompt_type"] = "review"
+            await db.set_child_context(message.from_user.id, context)
+            await db.set_last_onboarding_prompt(message.from_user.id)
         return
+
+    # Сохраняем тип промпта в child_context для чередования fill/review
+    context = {}
+    if db_user.get("child_context"):
+        try:
+            context = json.loads(db_user["child_context"])
+        except Exception:
+            pass
+    context["_last_prompt_type"] = action["type"]
+    await db.set_child_context(message.from_user.id, context)
 
     if action["type"] == "fill":
         text = f"{action['disclaimer']}\n\n{action['question']}"

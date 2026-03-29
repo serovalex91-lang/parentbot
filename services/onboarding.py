@@ -12,10 +12,11 @@ from datetime import datetime, date, timedelta
 from typing import Optional, Tuple, Dict, List
 
 # Минимальный интервал между промптами (дни)
-PROMPT_INTERVAL_DAYS = 14
-# Ускоренный режим для новых юзеров (первые 3 промпта — чаще)
-FAST_INTERVAL_DAYS = 4
-FAST_PROMPTS_COUNT = 3
+PROMPT_INTERVAL_DAYS = 7  # раз в неделю после FAST-фазы (новый вопрос)
+REVIEW_INTERVAL_DAYS = 3  # через 3 дня после fill — review (если есть устаревшие)
+# Ускоренный режим для новых юзеров (первые N промптов — чаще)
+FAST_INTERVAL_DAYS = 2
+FAST_PROMPTS_COUNT = 5
 # Поле считается устаревшим после N дней
 STALE_THRESHOLDS = {
     "child_features": 30,    # здоровье — раз в месяц
@@ -239,7 +240,6 @@ def should_prompt(db_user: dict) -> bool:
 
     try:
         last_dt = datetime.fromisoformat(last_prompt)
-        # Определяем интервал — ускоренный или обычный
         context = {}
         if db_user.get("child_context"):
             try:
@@ -248,7 +248,20 @@ def should_prompt(db_user: dict) -> bool:
                 pass
         ts = context.get("_timestamps", {})
         prompts_done = len(ts)
-        interval = FAST_INTERVAL_DAYS if prompts_done < FAST_PROMPTS_COUNT else PROMPT_INTERVAL_DAYS
+
+        if prompts_done < FAST_PROMPTS_COUNT:
+            # FAST-фаза: каждые 2 дня
+            interval = FAST_INTERVAL_DAYS
+        else:
+            # NORMAL-фаза: зависит от типа последнего промпта
+            last_type = context.get("_last_prompt_type", "fill")
+            if last_type == "fill":
+                # После нового вопроса — через 3 дня проверяем review
+                interval = REVIEW_INTERVAL_DAYS
+            else:
+                # После review — ждём остаток недели до следующего fill
+                interval = PROMPT_INTERVAL_DAYS - REVIEW_INTERVAL_DAYS
+
         return datetime.utcnow() - last_dt > timedelta(days=interval)
     except (ValueError, TypeError):
         return True
@@ -358,31 +371,66 @@ async def pick_onboarding_action(
     db_user: dict, age_months: int
 ) -> Optional[dict]:
     """Выбирает действие: fill или review.
+    FAST-фаза: только fill (новые вопросы каждые 2 дня).
+    NORMAL-фаза (после 5 вопросов):
+      - Раз в неделю — fill (новый вопрос), гарантированно
+      - Через 3 дня после fill — review, ТОЛЬКО если есть реально устаревшие поля
+      - Если устаревших нет — review пропускается, ждём следующий fill
     Возвращает dict с type и данными, или None."""
-    # Сначала проверяем ревизию — она приоритетнее
-    review = get_review_question(db_user)
-    if review:
-        field, value, label, date_str = review
-        return {
-            "type": "review",
-            "field": field,
-            "value": value,
-            "label": label,
-            "date_str": date_str,
-        }
+    context = {}
+    if db_user.get("child_context"):
+        try:
+            context = json.loads(db_user["child_context"])
+        except Exception:
+            pass
 
-    # Потом заполнение (может вызвать Haiku если банк исчерпан)
-    fill = await get_fill_question(db_user, age_months)
-    if fill:
-        field, question, disclaimer = fill
-        return {
-            "type": "fill",
-            "field": field,
-            "question": question,
-            "disclaimer": disclaimer,
-        }
+    ts = context.get("_timestamps", {})
+    prompts_done = len(ts)
 
-    return None
+    # FAST-фаза (первые N вопросов) — только fill
+    if prompts_done < FAST_PROMPTS_COUNT:
+        fill = await get_fill_question(db_user, age_months)
+        if fill:
+            field, question, disclaimer = fill
+            return {
+                "type": "fill",
+                "field": field,
+                "question": question,
+                "disclaimer": disclaimer,
+            }
+        return None
+
+    # NORMAL-фаза — определяем что сейчас нужно
+    last_type = context.get("_last_prompt_type", "fill")
+
+    if last_type == "fill":
+        # Последний был fill → сейчас очередь review (если есть устаревшие)
+        review = get_review_question(db_user)
+        if review:
+            field, value, label, date_str = review
+            return {
+                "type": "review",
+                "field": field,
+                "value": value,
+                "label": label,
+                "date_str": date_str,
+            }
+        # Нечего уточнять — пропускаем, вернём None
+        # should_prompt снова сработает через PROMPT_INTERVAL - REVIEW_INTERVAL дней
+        # и тогда last_type всё ещё "fill", но уже пора будет fill
+        return None
+    else:
+        # Последний был review (или первый раз) → новый вопрос
+        fill = await get_fill_question(db_user, age_months)
+        if fill:
+            field, question, disclaimer = fill
+            return {
+                "type": "fill",
+                "field": field,
+                "question": question,
+                "disclaimer": disclaimer,
+            }
+        return None
 
 
 def update_context_field(context: dict, field: str, value: str) -> dict:
