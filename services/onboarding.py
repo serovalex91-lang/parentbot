@@ -129,7 +129,8 @@ QUESTIONS_BY_AGE: Dict[str, List[Tuple[str, str]]] = {
 
 
 async def _generate_smart_question(
-    context: dict, age_months: int, child_name: str, gender: str
+    context: dict, age_months: int, child_name: str, gender: str,
+    asked_questions: list = None,
 ) -> Optional[Tuple[str, str]]:
     """Генерирует контекстный вопрос через Haiku на основе уже известных данных."""
     try:
@@ -147,22 +148,37 @@ async def _generate_smart_question(
         known_parts.append(f"Заметки: {context['child_notes']}")
     known_str = "\n".join(known_parts) if known_parts else "Пока ничего не записано."
 
+    # Собираем историю уже заданных вопросов
+    asked = asked_questions or context.get("_asked_questions", [])
+    if asked:
+        asked_str = "\n".join(f"- {q}" for q in asked[-20:])  # последние 20
+    else:
+        asked_str = ""
+
     name = child_name or "ребёнок"
     gp = "мальчик" if gender == "boy" else ("девочка" if gender == "girl" else "ребёнок")
+
+    asked_block = ""
+    if asked_str:
+        asked_block = f"\nУже заданные вопросы (НЕ повторяй и не перефразируй их):\n{asked_str}\n"
 
     system = (
         "Ты помощник родительского бота. Сгенерируй ОДИН короткий вопрос родителю "
         "о ребёнке, чтобы узнать что-то новое и полезное для персонализации советов.\n\n"
         f"Ребёнок: {name}, {gp}, {age_months} месяцев.\n"
-        f"Уже известно:\n{known_str}\n\n"
+        f"Уже известно:\n{known_str}\n"
+        f"{asked_block}\n"
         "Правила:\n"
         "1. Вопрос должен быть НОВЫМ — не дублировать то, что уже известно.\n"
-        "2. Подходить по возрасту.\n"
-        "3. Быть конкретным, а не абстрактным.\n"
-        "4. Использовать имя ребёнка.\n"
-        "5. Формат ответа строго JSON:\n"
+        "2. НЕ повторять и НЕ перефразировать уже заданные вопросы.\n"
+        "3. Подходить по возрасту.\n"
+        "4. Быть конкретным, а не абстрактным.\n"
+        "5. Использовать имя ребёнка.\n"
+        "6. Формат ответа строго JSON:\n"
         '{"field": "child_notes", "question": "текст вопроса"}\n'
         'field — одно из: child_features, child_character, child_notes\n'
+        "Если не можешь придумать вопрос, который ещё не задавался — верни:\n"
+        '{"field": "", "question": ""}\n'
         "Только JSON, ничего больше."
     )
 
@@ -521,9 +537,14 @@ async def get_fill_question(
 
     # Если банк исчерпан — генерируем через Haiku
     if not candidates:
-        generated = await _generate_smart_question(context, age_months, child_name, gender)
+        generated = await _generate_smart_question(
+            context, age_months, child_name, gender,
+            asked_questions=list(exclude),
+        )
         if generated:
             field, question_template = generated
+            if not field or not question_template:
+                return None  # LLM не смог придумать новый вопрос
             options = None
         else:
             return None

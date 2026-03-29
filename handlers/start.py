@@ -206,7 +206,12 @@ async def cmd_fillprofile(message: Message, state: FSMContext, db_user: dict = N
 
     result = await get_fill_question(db_user, age.months)
     if not result:
-        await message.answer("Все вопросы уже заданы — профиль заполнен :)")
+        ctx = _get_context(db_user)
+        cname = ctx.get("child_name", "ребёнка")
+        await message.answer(
+            f"На данный момент все вопросы про {cname} заданы — профиль заполнен.\n"
+            f"Со временем появятся новые вопросы по мере взросления :)"
+        )
         return
 
     field, q_text, disclaimer, options, template = result
@@ -610,8 +615,8 @@ async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext,
         else:
             await callback.message.edit_text(
                 f"Записано (<b>{flabel}</b>): <i>{value}</i>\n\n"
-                f"Все вопросы пройдены — ответов: <b>{answered}</b>. "
-                f"Профиль стал намного полнее :)"
+                f"Все вопросы на этот возраст пройдены — ответов: <b>{answered}</b>.\n"
+                f"Профиль стал полнее, буду учитывать в ответах :)"
             )
             await state.clear()
             await callback.answer()
@@ -758,8 +763,8 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
             # Вопросы закончились
             await message.answer(
                 f"Записано (<b>{label}</b>): <i>{normalized}</i>\n\n"
-                f"Все вопросы пройдены — ответов: <b>{answered}</b>. "
-                f"Профиль стал намного полнее, буду учитывать в ответах :)"
+                f"Все вопросы на этот возраст пройдены — ответов: <b>{answered}</b>.\n"
+                f"Профиль стал полнее, буду учитывать в ответах :)"
             )
             return
 
@@ -904,7 +909,12 @@ async def start_fillprofile_callback(callback: CallbackQuery, state: FSMContext,
 
     result = await get_fill_question(db_user, age.months)
     if not result:
-        await callback.message.answer("Все вопросы уже заданы — профиль заполнен :)")
+        ctx = _get_context(db_user)
+        cname = ctx.get("child_name", "ребёнка")
+        await callback.message.answer(
+            f"На данный момент все вопросы про {cname} заданы — профиль заполнен.\n"
+            f"Со временем появятся новые вопросы по мере взросления :)"
+        )
         return
 
     field, q_text, disclaimer, options, template = result
