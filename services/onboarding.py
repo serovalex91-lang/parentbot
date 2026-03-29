@@ -782,13 +782,16 @@ def format_child_summary(db_user: dict, age_display: str = "") -> str:
     parts.append(header)
 
     if context.get("child_features"):
-        parts.append(f"\n<b>Здоровье и особенности:</b>\n{context['child_features']}")
+        items = [i.strip() for i in context["child_features"].split(";") if i.strip()]
+        parts.append("\n<b>Здоровье и особенности:</b>\n" + "\n".join(f"• {i}" for i in items))
 
     if context.get("child_character"):
-        parts.append(f"\n<b>Характер:</b>\n{context['child_character']}")
+        items = [i.strip() for i in context["child_character"].split(";") if i.strip()]
+        parts.append("\n<b>Характер:</b>\n" + "\n".join(f"• {i}" for i in items))
 
     if context.get("child_notes"):
-        parts.append(f"\n<b>Заметки:</b>\n{context['child_notes']}")
+        items = [i.strip() for i in context["child_notes"].split(";") if i.strip()]
+        parts.append("\n<b>Заметки:</b>\n" + "\n".join(f"• {i}" for i in items))
 
     if not any(context.get(f) for f in ("child_features", "child_character", "child_notes")):
         parts.append("\n<i>Пока ничего не записано. Заполни профиль или отвечай на мои вопросы — информация будет накапливаться.</i>")
