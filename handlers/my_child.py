@@ -7,7 +7,7 @@ from config import Config
 from utils.age_calc import calculate_age
 from kb.rag_engine import search_kb, format_chunks_for_prompt
 from services.claude_client import ask_claude
-from services.onboarding import clean_context
+from services.onboarding import format_child_context_for_llm
 from utils.text_helpers import split_long_message
 from utils.thinking import ThinkingIndicator
 import db.queries as db
@@ -57,26 +57,7 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
 
         kb_text = format_chunks_for_prompt(chunks)
 
-        child_context = ""
-        if db_user.get("child_context"):
-            try:
-                ctx = json.loads(db_user["child_context"])
-                ctx = clean_context(ctx)
-                parts = []
-                if ctx.get("child_name"):
-                    parts.append(f"Имя: {ctx['child_name']}")
-                if ctx.get("child_features"):
-                    items = [i.strip() for i in ctx["child_features"].split(";") if i.strip()]
-                    parts.append("Здоровье/особенности:\n" + "\n".join(f"- {i}" for i in items))
-                if ctx.get("child_character"):
-                    items = [i.strip() for i in ctx["child_character"].split(";") if i.strip()]
-                    parts.append("Характер:\n" + "\n".join(f"- {i}" for i in items))
-                if ctx.get("child_notes"):
-                    items = [i.strip() for i in ctx["child_notes"].split(";") if i.strip()]
-                    parts.append("Заметки:\n" + "\n".join(f"- {i}" for i in items))
-                child_context = "\n".join(parts)
-            except Exception:
-                pass
+        child_context = format_child_context_for_llm(db_user)
 
         user_prompt = (
             f"Расскажи мне о ключевых этапах развития ребёнка в возрасте {age.display} ({age.context}). "

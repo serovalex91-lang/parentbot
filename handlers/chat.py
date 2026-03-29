@@ -32,29 +32,8 @@ def _get_gender(db_user: dict) -> str:
 
 async def _get_child_context_str(db_user: dict) -> str:
     """Формирует контекст о ребёнке для system prompt (без служебных полей)."""
-    if not db_user or not db_user.get("child_context"):
-        return ""
-    try:
-        ctx = json.loads(db_user["child_context"])
-        # Очищаем от дублей, команд и мусора
-        from services.onboarding import clean_context
-        ctx = clean_context(ctx)
-
-        parts = []
-        if ctx.get("child_name"):
-            parts.append(f"Имя: {ctx['child_name']}")
-        if ctx.get("child_features"):
-            items = [i.strip() for i in ctx["child_features"].split(";") if i.strip()]
-            parts.append("Здоровье/особенности:\n" + "\n".join(f"- {i}" for i in items))
-        if ctx.get("child_character"):
-            items = [i.strip() for i in ctx["child_character"].split(";") if i.strip()]
-            parts.append("Характер:\n" + "\n".join(f"- {i}" for i in items))
-        if ctx.get("child_notes"):
-            items = [i.strip() for i in ctx["child_notes"].split(";") if i.strip()]
-            parts.append("Заметки:\n" + "\n".join(f"- {i}" for i in items))
-        return "\n".join(parts)
-    except Exception:
-        return ""
+    from services.onboarding import format_child_context_for_llm
+    return format_child_context_for_llm(db_user)
 
 
 # ─── Переключение режима поиска ───────────────────────────────────────────────

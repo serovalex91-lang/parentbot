@@ -576,7 +576,7 @@ async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext,
 
         if next_q:
             next_field, next_text, next_disclaimer, next_options, next_template = next_q
-            asked.append(next_text)
+            asked.append(next_template)
 
             # Помечаем вопрос как заданный
             ctx_fresh = _get_context(db_user_fresh) if db_user_fresh else {}
@@ -724,7 +724,7 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
 
         if next_q:
             next_field, next_text, next_disclaimer, next_options, next_template = next_q
-            asked.append(next_text)
+            asked.append(next_template)
 
             # Помечаем вопрос как заданный
             ctx_fresh = _get_context(db_user_fresh) if db_user_fresh else {}
@@ -759,6 +759,7 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
             return
         else:
             # Вопросы закончились
+            await state.clear()
             await message.answer(
                 f"Записано (<b>{label}</b>): <i>{normalized}</i>\n\n"
                 f"Все вопросы на этот возраст пройдены — ответов: <b>{answered}</b>.\n"
@@ -817,6 +818,12 @@ async def onboarding_review_edit(message: Message, state: FSMContext, db_user: d
     if not value or not field:
         await state.clear()
         await message.answer("Оставляю без изменений.")
+        return
+
+    # Фильтрация команд
+    if value.startswith("/"):
+        await state.clear()
+        await message.answer("Это похоже на команду, а не на ответ. Оставляю без изменений.")
         return
 
     context = _get_context(db_user)
