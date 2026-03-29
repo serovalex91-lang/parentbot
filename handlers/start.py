@@ -851,6 +851,56 @@ async def child_summary_handler(callback: CallbackQuery, db_user: dict = None):
     await callback.answer()
 
 
+@router.callback_query(F.data == "start_fillprofile")
+async def start_fillprofile_callback(callback: CallbackQuery, state: FSMContext, db_user: dict = None):
+    """Кнопка 'Заполнить профиль' из меню профиля — запускает /fillprofile."""
+    if not db_user:
+        await callback.answer("Сначала пройди настройку")
+        return
+    # Создаём фейковое сообщение-обёртку не нужно — просто вызовем логику напрямую
+    await callback.answer()
+    if not db_user.get("child_birthdate"):
+        await callback.message.answer("Сначала укажи дату рождения ребёнка через /setdate")
+        return
+
+    age = calculate_age(db_user["child_birthdate"])
+    if not age:
+        await callback.message.answer("Не могу рассчитать возраст. Проверь дату через /setdate")
+        return
+
+    result = await get_fill_question(db_user, age.months)
+    if not result:
+        await callback.message.answer("Все вопросы уже заданы — профиль заполнен :)")
+        return
+
+    field, q_text, disclaimer, options = result
+    await state.set_state(OnboardingPrompt.waiting_fill_answer)
+    await state.update_data(
+        onboarding_field=field,
+        onboarding_question=q_text,
+        onboarding_options=options,
+        manual_mode=True,
+        asked_questions=[q_text],
+        questions_answered=0,
+    )
+    if options:
+        hints = "\n".join(f"  <b>{label}</b> — {hint}" for _, label, hint in options)
+        text = (
+            f"{disclaimer}\n\n{q_text}\n\n{hints}\n\n"
+            "<i>Выбери вариант или напиши свой. "
+            "«Пропустить» — остановить.</i>"
+        )
+        kb = onboarding_options_keyboard(options)
+    else:
+        text = (
+            f"{disclaimer}\n\n{q_text}\n\n"
+            "<i>Отвечай на вопросы — я буду задавать следующий. "
+            "Нажми «Пропустить» когда захочешь остановиться.</i>"
+        )
+        kb = onboarding_skip_keyboard()
+    await callback.message.answer(text, reply_markup=kb)
+
+
 # ─── Запрос на доступ (approve / reject) ─────────────────────────────────────
 
 @router.callback_query(F.data.startswith("access:"))

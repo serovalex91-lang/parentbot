@@ -112,6 +112,7 @@ def profile_keyboard() -> InlineKeyboardMarkup:
     for label, field in fields:
         builder.button(text=f"{label} [изменить]", callback_data=f"profile_edit:{field}")
     builder.button(text="📋 Сводка о ребёнке", callback_data="child_summary")
+    builder.button(text="📝 Заполнить профиль", callback_data="start_fillprofile")
     builder.adjust(1)
     return builder.as_markup()
 
