@@ -165,6 +165,19 @@ def onboarding_skip_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def onboarding_options_keyboard(options: list) -> InlineKeyboardMarkup:
+    """Клавиатура с вариантами ответов для онбординга.
+    options — список (value, label, hint).
+    """
+    builder = InlineKeyboardBuilder()
+    for i, (value, label, hint) in enumerate(options):
+        builder.button(text=f"{label}", callback_data=f"onb_opt:{i}")
+    builder.button(text="✏️ Свой вариант", callback_data="onb_opt:custom")
+    builder.button(text="Пропустить", callback_data="onboarding:skip")
+    builder.adjust(1)  # по одной кнопке в ряд
+    return builder.as_markup()
+
+
 def review_keyboard(field: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Актуально", callback_data=f"review:keep:{field}")

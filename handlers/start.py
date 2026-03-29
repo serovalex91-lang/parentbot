@@ -8,7 +8,7 @@ from loguru import logger
 
 from config import Config
 from states.fsm import Onboarding, SetDate, EditProfile, OnboardingPrompt
-from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard, onboarding_skip_keyboard
+from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard, onboarding_skip_keyboard, onboarding_options_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
 from services.onboarding import update_context_field, remove_context_field, format_child_summary, get_fill_question
 from services.claude_client import validate_onboarding_answer
@@ -204,26 +204,37 @@ async def cmd_fillprofile(message: Message, state: FSMContext, db_user: dict = N
         await message.answer("Не могу рассчитать возраст. Проверь дату через /setdate")
         return
 
-    question = await get_fill_question(db_user, age.months)
-    if not question:
+    result = await get_fill_question(db_user, age.months)
+    if not result:
         await message.answer("Все вопросы уже заданы — профиль заполнен :)")
         return
 
-    field, q_text, disclaimer = question
+    field, q_text, disclaimer, options = result
     await state.set_state(OnboardingPrompt.waiting_fill_answer)
     await state.update_data(
         onboarding_field=field,
         onboarding_question=q_text,
+        onboarding_options=options,
         manual_mode=True,
         asked_questions=[q_text],
         questions_answered=0,
     )
-    await message.answer(
-        f"{disclaimer}\n\n{q_text}\n\n"
-        "<i>Отвечай на вопросы — я буду задавать следующий. "
-        "Нажми «Пропустить» когда захочешь остановиться.</i>",
-        reply_markup=onboarding_skip_keyboard(),
-    )
+    if options:
+        hints = "\n".join(f"  <b>{label}</b> — {hint}" for _, label, hint in options)
+        text = (
+            f"{disclaimer}\n\n{q_text}\n\n{hints}\n\n"
+            "<i>Выбери вариант или напиши свой. "
+            "«Пропустить» — остановить.</i>"
+        )
+        kb = onboarding_options_keyboard(options)
+    else:
+        text = (
+            f"{disclaimer}\n\n{q_text}\n\n"
+            "<i>Отвечай на вопросы — я буду задавать следующий. "
+            "Нажми «Пропустить» когда захочешь остановиться.</i>"
+        )
+        kb = onboarding_skip_keyboard()
+    await message.answer(text, reply_markup=kb)
 
 
 # ─── /setdate ─────────────────────────────────────────────────────────────────
@@ -488,6 +499,114 @@ async def onboarding_skip(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ─── Onboarding: выбор варианта ответа ─────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("onb_opt:"))
+async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext, db_user: dict = None):
+    data = await state.get_data()
+    field = data.get("onboarding_field")
+    if not field:
+        await callback.answer("Сессия устарела")
+        return
+
+    choice = callback.data.split(":", 1)[1]
+
+    if choice == "custom":
+        # Переключаем на текстовый ввод — убираем кнопки, просим написать
+        await state.update_data(onboarding_options=None)
+        await callback.message.edit_text(
+            f"{callback.message.text}\n\n<b>Напиши свой вариант:</b>"
+        )
+        await callback.answer()
+        return
+
+    # Выбран один из вариантов
+    options = data.get("onboarding_options", [])
+    try:
+        idx = int(choice)
+        value, label, hint = options[idx]
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка выбора")
+        return
+
+    # Сохраняем выбранное значение
+    context = _get_context(db_user)
+    existing = context.get(field, "")
+    final_value = f"{existing}; {value}" if existing else value
+    context = update_context_field(context, field, final_value)
+    await db.set_child_context(callback.from_user.id, context)
+
+    field_labels = {
+        "child_features": "особенности",
+        "child_character": "характер",
+        "child_notes": "заметки",
+    }
+    flabel = field_labels.get(field, field)
+
+    # Ручной онбординг — сразу следующий вопрос
+    manual_mode = data.get("manual_mode", False)
+    if manual_mode:
+        asked = data.get("asked_questions", [])
+        answered = data.get("questions_answered", 0) + 1
+
+        db_user_fresh = await db.get_user(callback.from_user.id)
+        birthdate = db_user_fresh.get("child_birthdate", "") if db_user_fresh else ""
+        age_fresh = calculate_age(birthdate) if birthdate else None
+
+        next_q = None
+        if age_fresh:
+            next_q = await get_fill_question(
+                db_user_fresh, age_fresh.months, exclude_questions=set(asked)
+            )
+
+        if next_q:
+            next_field, next_text, next_disclaimer, next_options = next_q
+            asked.append(next_text)
+            await state.set_state(OnboardingPrompt.waiting_fill_answer)
+            await state.update_data(
+                onboarding_field=next_field,
+                onboarding_question=next_text,
+                onboarding_options=next_options,
+                manual_mode=True,
+                asked_questions=asked,
+                questions_answered=answered,
+            )
+            if next_options:
+                hints = "\n".join(
+                    f"  <b>{ol}</b> — {oh}" for _, ol, oh in next_options
+                )
+                await callback.message.edit_text(
+                    f"Записано (<b>{flabel}</b>): <i>{value}</i>\n\n"
+                    f"{next_disclaimer}\n\n{next_text}\n\n{hints}",
+                    reply_markup=onboarding_options_keyboard(next_options),
+                )
+            else:
+                await callback.message.edit_text(
+                    f"Записано (<b>{flabel}</b>): <i>{value}</i>\n\n"
+                    f"{next_disclaimer}\n\n{next_text}",
+                    reply_markup=onboarding_skip_keyboard(),
+                )
+            await callback.answer()
+            return
+        else:
+            await callback.message.edit_text(
+                f"Записано (<b>{flabel}</b>): <i>{value}</i>\n\n"
+                f"Все вопросы пройдены — ответов: <b>{answered}</b>. "
+                f"Профиль стал намного полнее :)"
+            )
+            await state.clear()
+            await callback.answer()
+            return
+
+    # Авто-онбординг — одиночный вопрос
+    await state.clear()
+    await callback.message.edit_text(
+        f"Записано в профиль (<b>{flabel}</b>): <i>{value}</i>\n\n"
+        f"Буду учитывать в ответах :)"
+    )
+    await callback.answer()
+
+
 # ─── Onboarding: ответ на fill-вопрос ─────────────────────────────────────────
 
 @router.message(OnboardingPrompt.waiting_fill_answer)
@@ -574,21 +693,32 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
             )
 
         if next_q:
-            next_field, next_text, next_disclaimer = next_q
+            next_field, next_text, next_disclaimer, next_options = next_q
             asked.append(next_text)
             await state.set_state(OnboardingPrompt.waiting_fill_answer)
             await state.update_data(
                 onboarding_field=next_field,
                 onboarding_question=next_text,
+                onboarding_options=next_options,
                 manual_mode=True,
                 asked_questions=asked,
                 questions_answered=answered,
             )
-            await message.answer(
-                f"Записано (<b>{label}</b>): <i>{normalized}</i>\n\n"
-                f"{next_disclaimer}\n\n{next_text}",
-                reply_markup=onboarding_skip_keyboard(),
-            )
+            if next_options:
+                hints = "\n".join(
+                    f"  <b>{ol}</b> — {oh}" for _, ol, oh in next_options
+                )
+                await message.answer(
+                    f"Записано (<b>{label}</b>): <i>{normalized}</i>\n\n"
+                    f"{next_disclaimer}\n\n{next_text}\n\n{hints}",
+                    reply_markup=onboarding_options_keyboard(next_options),
+                )
+            else:
+                await message.answer(
+                    f"Записано (<b>{label}</b>): <i>{normalized}</i>\n\n"
+                    f"{next_disclaimer}\n\n{next_text}",
+                    reply_markup=onboarding_skip_keyboard(),
+                )
             return
         else:
             # Вопросы закончились

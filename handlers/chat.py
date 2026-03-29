@@ -12,7 +12,7 @@ from services.brave_search import search_brave
 from services.onboarding import should_prompt, pick_onboarding_action
 from utils.text_helpers import split_long_message
 from utils.thinking import ThinkingIndicator
-from keyboards.main_kb import review_keyboard, onboarding_skip_keyboard
+from keyboards.main_kb import review_keyboard, onboarding_skip_keyboard, onboarding_options_keyboard
 from states.fsm import OnboardingPrompt
 import db.queries as db
 import asyncio
@@ -256,12 +256,21 @@ async def _maybe_onboarding_prompt(
 
     if action["type"] == "fill":
         text = f"{action['disclaimer']}\n\n{action['question']}"
+        options = action.get("options")
         await state.set_state(OnboardingPrompt.waiting_fill_answer)
         await state.update_data(
             onboarding_field=action["field"],
             onboarding_question=action["question"],
+            onboarding_options=options,
         )
-        await message.answer(text, reply_markup=onboarding_skip_keyboard())
+        if options:
+            # Добавляем подсказки к вопросу
+            hints = "\n".join(f"  <b>{label}</b> — {hint}" for _, label, hint in options)
+            text += f"\n\n{hints}"
+            kb = onboarding_options_keyboard(options)
+        else:
+            kb = onboarding_skip_keyboard()
+        await message.answer(text, reply_markup=kb)
         await db.set_last_onboarding_prompt(message.from_user.id)
 
     elif action["type"] == "review":
