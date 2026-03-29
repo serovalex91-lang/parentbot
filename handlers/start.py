@@ -544,13 +544,11 @@ async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext,
     # Сохраняем выбранное значение (без дубликатов)
     context = _get_context(db_user)
     existing = context.get(field, "")
-    if existing and value.lower() in existing.lower():
-        final_value = existing  # уже есть
-    elif existing:
+    if existing:
         final_value = f"{existing}; {value}"
     else:
         final_value = value
-    context = update_context_field(context, field, final_value)
+    context = update_context_field(context, field, final_value)  # дедупликация внутри
     await db.set_child_context(callback.from_user.id, context)
 
     field_labels = {

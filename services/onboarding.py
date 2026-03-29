@@ -688,9 +688,59 @@ def mark_question_asked(context: dict, question_template: str) -> dict:
     return context
 
 
+def _clean_field_value(value: str) -> str:
+    """Очищает значение поля: убирает дубли, команды, мусор."""
+    if not value:
+        return value
+
+    # Разбиваем по разделителям (; и .\n)
+    parts = [p.strip().rstrip(".") for p in value.replace(".\n", ";").split(";")]
+    # Убираем пустые, команды (/admin и т.д.)
+    parts = [p for p in parts if p and not p.startswith("/")]
+
+    # Дедупликация: убираем записи, которые уже содержатся в другой (более полной)
+    unique = []
+    for p in parts:
+        p_lower = p.lower()
+        # Пропускаем если эта запись уже есть или является частью другой
+        is_dup = False
+        for existing in unique:
+            if p_lower == existing.lower():
+                is_dup = True
+                break
+            # Если новая запись — подстрока уже добавленной (более полной)
+            if p_lower in existing.lower():
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        # Если новая запись длиннее и содержит уже добавленную — заменяем
+        replaced = False
+        for i, existing in enumerate(unique):
+            if existing.lower() in p_lower and existing.lower() != p_lower:
+                unique[i] = p
+                replaced = True
+                break
+        if not replaced:
+            unique.append(p)
+
+    return "; ".join(unique)
+
+
+def clean_context(context: dict) -> dict:
+    """Очищает все текстовые поля контекста от дублей и мусора."""
+    for field in ("child_features", "child_character", "child_notes"):
+        if context.get(field):
+            context[field] = _clean_field_value(context[field])
+    return context
+
+
 def update_context_field(context: dict, field: str, value: str) -> dict:
     """Обновляет поле в child_context с timestamp."""
     context[field] = value
+    # Очищаем поле от дублей при каждом сохранении
+    if field in ("child_features", "child_character", "child_notes"):
+        context[field] = _clean_field_value(context[field])
     if "_timestamps" not in context:
         context["_timestamps"] = {}
     context["_timestamps"][field] = datetime.utcnow().isoformat()
@@ -718,6 +768,9 @@ def format_child_summary(db_user: dict, age_display: str = "") -> str:
     child_gender = context.get("child_gender", "")
     gender_map = {"boy": "мальчик", "girl": "девочка"}
     gender = gender_map.get(child_gender, "")
+
+    # Очищаем данные от дублей и мусора перед отображением
+    context = clean_context(context)
 
     name_prep = _decline_name(child_name, "prep", child_gender)
     parts = []
