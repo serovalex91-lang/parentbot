@@ -280,7 +280,7 @@ async def ask_claude(
     try:
         response = await client.messages.create(
             model=model,
-            max_tokens=2048,
+            max_tokens=4096,
             system=system_prompt,
             messages=messages,
         )
