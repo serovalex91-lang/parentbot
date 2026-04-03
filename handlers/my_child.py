@@ -97,9 +97,8 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
             await message.answer("❌ Ошибка при получении ответа. Попробуй позже.")
             return
 
-    await db.add_message(user_id, "user", user_prompt)
-    await db.add_message(user_id, "assistant", result.text)
-
+    # НЕ сохраняем в историю диалога — кнопка автономна,
+    # чтобы не загрязнять контекст обычного чата
     await db.add_token_usage(
         user_id=user_id,
         model=result.model,
