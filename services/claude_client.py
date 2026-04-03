@@ -256,6 +256,7 @@ async def ask_claude(
     brave_results: str = "",
     my_style: str = "",
     partner_style: str = "",
+    temperature: float | None = None,
 ) -> ClaudeResponse:
     client = get_client()
 
@@ -278,12 +279,15 @@ async def ask_claude(
     logger.info("Роутинг: model={} для запроса '{}'", model.split("-")[1], user_message[:50])
 
     try:
-        response = await client.messages.create(
+        create_kwargs = dict(
             model=model,
             max_tokens=4096,
             system=system_prompt,
             messages=messages,
         )
+        if temperature is not None:
+            create_kwargs["temperature"] = temperature
+        response = await client.messages.create(**create_kwargs)
         text = _sanitize_markdown(response.content[0].text)
         input_tokens = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
