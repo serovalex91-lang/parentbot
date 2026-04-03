@@ -77,13 +77,6 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
             except Exception:
                 pass
 
-        gap_hours = config.session_gap_hours if config else 4
-        history = await db.get_last_messages(
-            user_id,
-            limit=config.max_history_messages if config else 20,
-            session_gap_hours=gap_hours,
-        )
-
         await thinking.update("Генерирую рекомендации...")
 
         try:
@@ -93,7 +86,7 @@ async def my_child_handler(message: Message, bot: Bot, config: Config = None, db
                 age_display=age.display,
                 age_context=age.context,
                 kb_chunks=kb_text,
-                history=history,
+                history=[],
                 user_message=user_prompt,
                 child_context=child_context,
                 my_style=my_style,
