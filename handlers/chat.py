@@ -9,6 +9,7 @@ from utils.age_calc import calculate_age
 from kb.rag_engine import search_kb, format_chunks_for_prompt
 from services.claude_client import ask_claude
 from services.brave_search import search_brave
+from services.transcribe import transcribe_voice
 from services.onboarding import should_prompt, pick_onboarding_action, mark_question_asked
 from utils.text_helpers import split_long_message
 from utils.thinking import ThinkingIndicator
@@ -60,6 +61,38 @@ async def toggle_search_mode(message: Message, db_user: dict = None):
 @router.message(F.text == "💬 Задать вопрос")
 async def ask_question_prompt(message: Message):
     await message.answer("✏️ Напиши свой вопрос — я отвечу на основе базы знаний.")
+
+
+# ─── Голосовые сообщения ──────────────────────────────────────────────────────
+
+@router.message(F.voice)
+async def handle_voice(message: Message, bot: Bot, state: FSMContext, config: Config = None, db_user: dict = None):
+    """Транскрибирует голосовое сообщение и обрабатывает как текст."""
+    if not config or not config.deepgram_api_key:
+        await message.answer("⚠️ Распознавание голоса не настроено.")
+        return
+
+    if not db_user:
+        await message.answer("Сначала пройди настройку через /start")
+        return
+
+    # Скачиваем аудио
+    file = await bot.get_file(message.voice.file_id)
+    audio_data = await bot.download_file(file.file_path)
+    audio_bytes = audio_data.read()
+
+    # Транскрибируем
+    text = await transcribe_voice(audio_bytes, config.deepgram_api_key)
+    if not text:
+        await message.answer("🎤 Не удалось распознать голосовое сообщение. Попробуй ещё раз или напиши текстом.")
+        return
+
+    # Показываем юзеру что распознали
+    await message.answer(f"🎤 <i>{text}</i>")
+
+    # Подставляем текст и обрабатываем как обычное сообщение
+    message.text = text
+    await handle_chat(message, bot, state, config, db_user)
 
 
 # ─── Основной чат ─────────────────────────────────────────────────────────────

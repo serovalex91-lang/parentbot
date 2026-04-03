@@ -21,6 +21,7 @@ class Config:
     claude_model_light: str
     max_history_messages: int
     session_gap_hours: int
+    deepgram_api_key: str
     log_level: str
 
     @property
@@ -68,5 +69,6 @@ def load_config() -> Config:
         claude_model_light=os.getenv("CLAUDE_MODEL_LIGHT", "claude-haiku-4-5-20251001"),
         max_history_messages=int(os.getenv("MAX_HISTORY_MESSAGES", "20")),
         session_gap_hours=int(os.getenv("SESSION_GAP_HOURS", "4")),
+        deepgram_api_key=os.getenv("DEEPGRAM_API_KEY", ""),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
     )
