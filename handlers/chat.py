@@ -90,9 +90,9 @@ async def handle_voice(message: Message, bot: Bot, state: FSMContext, config: Co
     # Показываем юзеру что распознали
     await message.answer(f"🎤 <i>{text}</i>")
 
-    # Подставляем текст и обрабатываем как обычное сообщение
-    message.text = text
-    await handle_chat(message, bot, state, config, db_user)
+    # Создаём копию сообщения с текстом (Message — frozen pydantic model)
+    text_message = message.model_copy(update={"text": text})
+    await handle_chat(text_message, bot, state, config, db_user)
 
 
 # ─── Основной чат ─────────────────────────────────────────────────────────────
