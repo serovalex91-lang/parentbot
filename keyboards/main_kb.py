@@ -188,6 +188,15 @@ def review_keyboard(field: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def update_broadcast_keyboard(changelog: str) -> InlineKeyboardMarkup:
+    """Кнопки для уведомления админа об обновлении."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📢 Отправить всем", callback_data="update:broadcast")
+    builder.button(text="❌ Отклонить", callback_data="update:dismiss")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def access_request_keyboard(user_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Добавить", callback_data=f"access:approve:{user_id}")

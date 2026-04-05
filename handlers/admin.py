@@ -355,6 +355,59 @@ async def book_upload_prompt(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "update:broadcast")
+async def update_broadcast(callback: CallbackQuery, bot: Bot, db_user: dict = None):
+    """Рассылка changelog всем активным юзерам."""
+    if not _is_admin(db_user):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    # Берём текст changelog из сообщения админа (между первой и последней строкой)
+    original = callback.message.text or ""
+    lines = original.split("\n")
+    # Извлекаем changelog — всё между заголовком и последней строкой-вопросом
+    changelog_lines = []
+    for line in lines[1:]:  # пропускаем заголовок
+        stripped = line.strip()
+        if stripped == "Отправить уведомление пользователям?":
+            break
+        if stripped:
+            changelog_lines.append(stripped)
+
+    if not changelog_lines:
+        await callback.answer("Нет данных для рассылки.", show_alert=True)
+        return
+
+    broadcast_text = "<b>Обновление бота</b>\n\n" + "\n".join(changelog_lines)
+
+    users = await db.get_all_active_users()
+    sent, failed = 0, 0
+    for user in users:
+        try:
+            await bot.send_message(user["id"], broadcast_text)
+            sent += 1
+        except Exception as e:
+            logger.warning("Update broadcast failed for {}: {}", user["id"], e)
+            failed += 1
+
+    await callback.message.edit_text(
+        callback.message.text + f"\n\n✅ Отправлено: {sent}, ошибок: {failed}"
+    )
+    await callback.answer(f"Отправлено {sent} юзерам")
+
+
+@router.callback_query(F.data == "update:dismiss")
+async def update_dismiss(callback: CallbackQuery, db_user: dict = None):
+    """Отклонить рассылку обновления."""
+    if not _is_admin(db_user):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+    await callback.message.edit_text(
+        callback.message.text + "\n\n<i>Рассылка отклонена.</i>"
+    )
+    await callback.answer("Отклонено")
+
+
 @router.callback_query(F.data == "noop")
 async def noop_callback(callback: CallbackQuery):
     await callback.answer()

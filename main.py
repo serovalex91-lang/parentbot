@@ -16,6 +16,7 @@ from kb.embedder import warmup as warmup_embedder
 from services.claude_client import init_claude
 from services.scheduler import start_scheduler, stop_scheduler
 from services.brave_search import close_brave_session
+from services.update_notifier import check_and_notify
 import db.queries as db_queries
 
 
@@ -66,6 +67,7 @@ async def main():
     # Планировщик
     async def on_startup():
         start_scheduler(bot)
+        await check_and_notify(bot, config.admin_telegram_id)
 
     async def on_shutdown():
         stop_scheduler()
