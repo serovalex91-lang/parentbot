@@ -386,44 +386,45 @@ async def book_upload_prompt(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "update:broadcast")
-async def update_broadcast(callback: CallbackQuery, bot: Bot, db_user: dict = None):
-    """Рассылка changelog всем активным юзерам."""
+async def update_broadcast(callback: CallbackQuery, state: FSMContext, db_user: dict = None):
+    """Запросить текст для рассылки юзерам."""
     if not _is_admin(db_user):
         await callback.answer("Нет прав.", show_alert=True)
         return
 
-    # Берём текст changelog из сообщения админа (между первой и последней строкой)
-    original = callback.message.text or ""
-    lines = original.split("\n")
-    # Извлекаем changelog — всё между заголовком и последней строкой-вопросом
-    changelog_lines = []
-    for line in lines[1:]:  # пропускаем заголовок
-        stripped = line.strip()
-        if stripped == "Отправить уведомление пользователям?":
-            break
-        if stripped:
-            changelog_lines.append(stripped)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(AdminPanel.waiting_update_text)
+    await callback.message.answer(
+        "✏️ Напиши текст уведомления для пользователей.\n"
+        "Это то, что они увидят. Или /cancel для отмены."
+    )
+    await callback.answer()
 
-    if not changelog_lines:
-        await callback.answer("Нет данных для рассылки.", show_alert=True)
+
+@router.message(AdminPanel.waiting_update_text)
+async def update_broadcast_send(message: Message, state: FSMContext, bot: Bot):
+    """Отправка текста обновления всем юзерам."""
+    text = (message.text or "").strip()
+    if text == "/cancel":
+        await state.clear()
+        await message.answer("Рассылка отменена.")
         return
-
-    broadcast_text = "<b>Обновление бота</b>\n\n" + "\n".join(changelog_lines)
+    if not text:
+        await message.answer("Текст не может быть пустым. Напиши ещё раз или /cancel:")
+        return
 
     users = await db.get_all_active_users()
     sent, failed = 0, 0
     for user in users:
         try:
-            await bot.send_message(user["id"], broadcast_text)
+            await bot.send_message(user["id"], text)
             sent += 1
         except Exception as e:
             logger.warning("Update broadcast failed for {}: {}", user["id"], e)
             failed += 1
 
-    await callback.message.edit_text(
-        callback.message.text + f"\n\n✅ Отправлено: {sent}, ошибок: {failed}"
-    )
-    await callback.answer(f"Отправлено {sent} юзерам")
+    await state.clear()
+    await message.answer(f"✅ Отправлено: {sent}, ошибок: {failed}")
 
 
 @router.callback_query(F.data == "update:dismiss")

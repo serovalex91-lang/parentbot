@@ -27,3 +27,4 @@ class AdminPanel(StatesGroup):
     waiting_add_id = State()
     waiting_remove_id = State()
     waiting_broadcast_text = State()
+    waiting_update_text = State()  # текст рассылки об обновлении
