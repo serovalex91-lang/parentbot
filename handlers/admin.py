@@ -8,8 +8,9 @@ from loguru import logger
 
 from config import Config
 from states.fsm import AdminPanel
-from keyboards.main_kb import library_keyboard, confirm_delete_keyboard, admin_keyboard
+from keyboards.main_kb import library_keyboard, confirm_delete_keyboard, admin_keyboard, update_broadcast_keyboard
 from kb.chroma_client import delete_chunks
+from services.update_notifier import get_recent_changelog
 import db.queries as db
 
 router = Router()
@@ -172,6 +173,35 @@ async def admin_broadcast_execute(message: Message, state: FSMContext, bot: Bot)
             failed += 1
     await state.clear()
     await message.answer(f"✅ Рассылка: {sent} отправлено, {failed} ошибок.")
+
+
+@router.message(Command("changelog"))
+async def cmd_changelog(message: Message, db_user: dict = None):
+    """Показать последние изменения бота с кнопкой рассылки."""
+    if not _is_admin(db_user):
+        return
+    changelog, count = get_recent_changelog(10)
+    if not changelog:
+        await message.answer("Нет коммитов в git log.")
+        return
+    word = _plural_changes(count)
+    text = (
+        f"<b>Обновление бота</b> ({count} {word})\n\n"
+        f"{changelog}\n\n"
+        f"Отправить уведомление пользователям?"
+    )
+    await message.answer(text, reply_markup=update_broadcast_keyboard(changelog))
+
+
+def _plural_changes(n: int) -> str:
+    if 11 <= n % 100 <= 19:
+        return "изменений"
+    mod = n % 10
+    if mod == 1:
+        return "изменение"
+    if 2 <= mod <= 4:
+        return "изменения"
+    return "изменений"
 
 
 @router.message(Command("whitelist_add"))

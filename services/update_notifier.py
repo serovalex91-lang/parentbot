@@ -114,6 +114,22 @@ async def check_and_notify(bot: Bot, admin_id: int):
     _save_head(current_head)
 
 
+def get_recent_changelog(n: int = 10) -> tuple[str, int]:
+    """Возвращает (changelog_text, count) для последних N коммитов."""
+    log_output = _run_git([
+        "log", f"-{n}",
+        "--pretty=format:%h|%s", "--no-merges",
+    ])
+    if not log_output:
+        return "", 0
+    commits = []
+    for line in log_output.strip().split("\n"):
+        if "|" in line:
+            short_hash, subject = line.split("|", 1)
+            commits.append({"hash": short_hash, "subject": subject})
+    return _format_changelog(commits), len(commits)
+
+
 def _save_head(commit_hash: str):
     os.makedirs(os.path.dirname(LAST_COMMIT_FILE), exist_ok=True)
     with open(LAST_COMMIT_FILE, "w") as f:
