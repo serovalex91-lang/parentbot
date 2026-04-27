@@ -134,7 +134,7 @@ async def _generate_smart_question(
 ) -> Optional[Tuple[str, str]]:
     """Генерирует контекстный вопрос через Haiku на основе уже известных данных."""
     try:
-        from services.claude_client import get_client, MODEL_HAIKU, calculate_cost
+        from services.claude_client import get_client, MODEL_FLASH, calculate_cost
         import db.queries as db_queries
     except Exception:
         return None
@@ -184,20 +184,22 @@ async def _generate_smart_question(
 
     try:
         client = get_client()
-        response = await client.messages.create(
-            model=MODEL_HAIKU,
+        response = await client.chat.completions.create(
+            model=MODEL_FLASH,
             max_tokens=150,
-            system=system,
-            messages=[{"role": "user", "content": "Сгенерируй вопрос."}],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": "Сгенерируй вопрос."},
+            ],
         )
-        raw = response.content[0].text.strip()
-        cost = calculate_cost(
-            MODEL_HAIKU, response.usage.input_tokens, response.usage.output_tokens
-        )
+        raw = response.choices[0].message.content.strip()
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        cost = calculate_cost(MODEL_FLASH, input_tokens, output_tokens)
         from loguru import logger
         logger.info(
             "Smart question gen: in={} out={} cost=${:.4f}",
-            response.usage.input_tokens, response.usage.output_tokens, cost,
+            input_tokens, output_tokens, cost,
         )
 
         start = raw.find("{")
