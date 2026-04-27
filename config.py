@@ -12,7 +12,7 @@ class Config:
     bot_token: str
     admin_telegram_id: int
     whitelist_ids: List[int]
-    anthropic_api_key: str
+    openrouter_api_key: str
     brave_api_key: str
     data_dir: str
     db_path: str
@@ -42,13 +42,13 @@ def load_config() -> Config:
         whitelist_ids.append(admin_id)
 
     bot_token = os.getenv("BOT_TOKEN", "")
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
 
     missing = []
     if not bot_token:
         missing.append("BOT_TOKEN")
-    if not anthropic_key:
-        missing.append("ANTHROPIC_API_KEY")
+    if not openrouter_key:
+        missing.append("OPENROUTER_API_KEY")
     if not admin_id:
         missing.append("ADMIN_TELEGRAM_ID")
     if missing:
@@ -60,7 +60,7 @@ def load_config() -> Config:
         bot_token=bot_token,
         admin_telegram_id=admin_id,
         whitelist_ids=whitelist_ids,
-        anthropic_api_key=anthropic_key,
+        openrouter_api_key=openrouter_key,
         brave_api_key=os.getenv("BRAVE_API_KEY", ""),
         data_dir=os.getenv("DATA_DIR", "data"),
         db_path=os.getenv("DB_PATH", "db/parentbot.db"),

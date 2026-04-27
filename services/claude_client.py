@@ -3,20 +3,21 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from typing import List, Dict, Optional
-import anthropic
+from openai import AsyncOpenAI
 from loguru import logger
 
 from config import Config
 
-_client: Optional[anthropic.AsyncAnthropic] = None
+_client: Optional[AsyncOpenAI] = None
 
-MODEL_SONNET = "claude-sonnet-4-6"
-MODEL_HAIKU = "claude-haiku-4-5-20251001"
+# OpenRouter модели
+MODEL_SONNET = "anthropic/claude-sonnet-4-6"
+MODEL_FLASH = "google/gemini-2.5-flash"
 
-# Цены за 1M токенов (USD) — https://docs.anthropic.com/en/docs/about-claude/pricing
+# Цены за 1M токенов (USD) — OpenRouter pricing
 PRICING = {
     MODEL_SONNET: {"input": 3.0, "output": 15.0},
-    MODEL_HAIKU:  {"input": 0.80, "output": 4.0},
+    MODEL_FLASH:  {"input": 0.15, "output": 0.60},
 }
 
 
@@ -30,7 +31,7 @@ class ClaudeResponse:
 
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    prices = PRICING.get(model, PRICING[MODEL_HAIKU])
+    prices = PRICING.get(model, PRICING[MODEL_FLASH])
     return (input_tokens * prices["input"] + output_tokens * prices["output"]) / 1_000_000
 
 _STYLE_MAP = {
@@ -63,20 +64,21 @@ _COMPLEX_PATTERNS = [
     r"наркотик|курит|пьёт|секс|порно|буллинг|травл|самоповрежд",
     # Партнёрские конфликты о воспитании
     r"муж не согласен|жена не понимает|свекров|тёщ|конфликт.*воспитан",
-    # Длинные развёрнутые вопросы (>200 символов обычно сложнее)
-    # Обрабатывается отдельно в функции
 ]
 _COMPLEX_RE = re.compile("|".join(_COMPLEX_PATTERNS), re.IGNORECASE)
 
 
 def init_claude(api_key: str):
     global _client
-    _client = anthropic.AsyncAnthropic(api_key=api_key)
+    _client = AsyncOpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+    )
 
 
-def get_client() -> anthropic.AsyncAnthropic:
+def get_client() -> AsyncOpenAI:
     if _client is None:
-        raise RuntimeError("Claude client не инициализирован. Вызови init_claude() при старте.")
+        raise RuntimeError("OpenRouter client не инициализирован. Вызови init_claude() при старте.")
     return _client
 
 
@@ -89,7 +91,7 @@ def _resolve_style(value: str) -> str:
 
 
 def _choose_model(user_message: str, kb_chunks: str, brave_results: str) -> str:
-    """Роутинг: сложные вопросы → Sonnet, простые → Haiku."""
+    """Роутинг: сложные вопросы → Sonnet, простые → Gemini Flash."""
     # Сложный вопрос по содержанию
     if _COMPLEX_RE.search(user_message):
         return MODEL_SONNET
@@ -106,8 +108,8 @@ def _choose_model(user_message: str, kb_chunks: str, brave_results: str) -> str:
     if kb_chunks and len(kb_chunks) > 5000:
         return MODEL_SONNET
 
-    # Всё остальное — Haiku справится
-    return MODEL_HAIKU
+    # Всё остальное — Gemini Flash справится
+    return MODEL_FLASH
 
 
 def _build_system_prompt(
@@ -271,31 +273,34 @@ async def ask_claude(
         partner_style=partner_style,
     )
 
-    messages = [{"role": m["role"], "content": m["content"]} for m in history]
+    messages = [{"role": "system", "content": system_prompt}]
+    for m in history:
+        messages.append({"role": m["role"], "content": m["content"]})
     messages.append({"role": "user", "content": user_message})
 
     # Роутинг модели
     model = _choose_model(user_message, kb_chunks, brave_results)
-    logger.info("Роутинг: model={} для запроса '{}'", model.split("-")[1], user_message[:50])
+    model_short = model.split("/")[-1][:20]
+    logger.info("Роутинг: model={} для запроса '{}'", model_short, user_message[:50])
 
     try:
         create_kwargs = dict(
             model=model,
             max_tokens=4096,
-            system=system_prompt,
             messages=messages,
         )
         if temperature is not None:
             create_kwargs["temperature"] = temperature
-        response = await client.messages.create(**create_kwargs)
-        text = _sanitize_markdown(response.content[0].text)
-        input_tokens = response.usage.input_tokens
-        output_tokens = response.usage.output_tokens
+
+        response = await client.chat.completions.create(**create_kwargs)
+        text = _sanitize_markdown(response.choices[0].message.content)
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
         cost = calculate_cost(model, input_tokens, output_tokens)
 
         logger.info(
             "Usage: model={} in={} out={} cost=${:.4f}",
-            model.split("-")[1], input_tokens, output_tokens, cost,
+            model_short, input_tokens, output_tokens, cost,
         )
 
         return ClaudeResponse(
@@ -306,7 +311,7 @@ async def ask_claude(
             cost_usd=cost,
         )
     except Exception as e:
-        logger.error("Ошибка Claude API ({}): {}", model, e)
+        logger.error("Ошибка OpenRouter API ({}): {}", model, e)
         raise
 
 
@@ -326,7 +331,7 @@ async def validate_onboarding_answer(
     age_months: int,
     field: str,
 ) -> ValidationResult:
-    """Валидация и нормализация ответа на onboarding-вопрос через Haiku."""
+    """Валидация и нормализация ответа на onboarding-вопрос через Gemini Flash."""
     client = get_client()
 
     field_labels = {
@@ -357,29 +362,29 @@ async def validate_onboarding_answer(
     prompt = f"Вопрос: {question}\nОтвет пользователя: {answer}"
 
     try:
-        response = await client.messages.create(
-            model=MODEL_HAIKU,
+        response = await client.chat.completions.create(
+            model=MODEL_FLASH,
             max_tokens=200,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
         )
-        raw = response.content[0].text.strip()
-        cost = calculate_cost(
-            MODEL_HAIKU, response.usage.input_tokens, response.usage.output_tokens
-        )
+        raw = response.choices[0].message.content.strip()
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        cost = calculate_cost(MODEL_FLASH, input_tokens, output_tokens)
         logger.info(
             "Onboarding validation: in={} out={} cost=${:.4f}",
-            response.usage.input_tokens, response.usage.output_tokens, cost,
+            input_tokens, output_tokens, cost,
         )
 
         # Парсим JSON-ответ
-        # Извлекаем JSON из ответа (на случай если Haiku добавит обёртку)
         start = raw.find("{")
         end = raw.rfind("}") + 1
         if start >= 0 and end > start:
             data = json.loads(raw[start:end])
         else:
-            # Не удалось распарсить — принимаем как есть
             return ValidationResult(True, answer.strip(), "", cost)
 
         status = data.get("status", "ok")
@@ -392,5 +397,4 @@ async def validate_onboarding_answer(
 
     except Exception as e:
         logger.warning("Onboarding validation error: {}", e)
-        # При ошибке — принимаем ответ как есть
         return ValidationResult(True, answer.strip(), "", 0.0)

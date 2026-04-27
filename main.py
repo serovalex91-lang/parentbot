@@ -41,7 +41,7 @@ async def main():
 
     # Инициализировать ChromaDB и Claude
     init_chroma(config.chroma_dir)
-    init_claude(config.anthropic_api_key)
+    init_claude(config.openrouter_api_key)
 
     # Предзагрузить модель эмбеддингов в отдельном потоке (не блокируя старт)
     await asyncio.to_thread(warmup_embedder)
