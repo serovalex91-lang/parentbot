@@ -548,7 +548,8 @@ async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext,
         final_value = f"{existing}; {value}"
     else:
         final_value = value
-    context = update_context_field(context, field, final_value)  # дедупликация внутри
+    question = data.get("onboarding_question", "")
+    context = update_context_field(context, field, final_value, question=question)
     await db.set_child_context(callback.from_user.id, context)
 
     field_labels = {
@@ -695,7 +696,7 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     else:
         final_value = normalized
 
-    context = update_context_field(context, field, final_value)
+    context = update_context_field(context, field, final_value, question=question)
     await db.set_child_context(message.from_user.id, context)
 
     field_labels = {

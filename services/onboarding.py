@@ -128,6 +128,35 @@ QUESTIONS_BY_AGE: Dict[str, List[Tuple[str, str]]] = {
 }
 
 
+_TOPIC_KEYWORDS = {
+    "сон": ["засыпа", "сон", "спит", "просыпа", "ночь", "дневн", "укачив", "режим сна"],
+    "еда": ["еда", "едит", "кормл", "прикорм", "аппетит", "грудн", "смесь", "вскармлив", "питан"],
+    "здоровье": ["аллерг", "здоров", "болезн", "зуб", "температур", "врач", "прививк", "колик"],
+    "моторика": ["моторик", "ходит", "ползает", "сидит", "переворачив", "стоит", "шаг"],
+    "речь": ["слов", "говорит", "речь", "звук", "лепет", "фраз"],
+    "эмоции": ["плач", "каприз", "настроен", "истерик", "страх", "тревог"],
+    "социальность": ["друз", "незнаком", "дет", "садик", "общен", "игр", "коллектив"],
+    "характер": ["темперамент", "характер", "спокойн", "активн", "застенчив", "упрям"],
+    "гигиена": ["купан", "горшок", "подгузник", "чистит зуб", "умыван"],
+    "развитие": ["книг", "рисует", "считает", "букв", "цвет", "форм", "развива", "занят"],
+}
+
+
+def _extract_covered_topics(asked_questions: list, context: dict) -> list:
+    """Определяет темы, которые уже покрыты вопросами и известными данными."""
+    all_text = " ".join(asked_questions).lower()
+    for field in ("child_features", "child_character", "child_notes"):
+        val = context.get(field, "")
+        if val:
+            all_text += " " + val.lower()
+
+    covered = []
+    for topic, keywords in _TOPIC_KEYWORDS.items():
+        if any(kw in all_text for kw in keywords):
+            covered.append(topic)
+    return covered
+
+
 async def _generate_smart_question(
     context: dict, age_months: int, child_name: str, gender: str,
     asked_questions: list = None,
@@ -148,10 +177,14 @@ async def _generate_smart_question(
         known_parts.append(f"Заметки: {context['child_notes']}")
     known_str = "\n".join(known_parts) if known_parts else "Пока ничего не записано."
 
-    # Собираем историю уже заданных вопросов
+    # Собираем ВСЮ историю заданных вопросов (не обрезаем)
     asked = asked_questions or context.get("_asked_questions", [])
+
+    # Извлекаем покрытые темы из вопросов и известных данных
+    covered_topics = _extract_covered_topics(asked, context)
+
     if asked:
-        asked_str = "\n".join(f"- {q}" for q in asked[-20:])  # последние 20
+        asked_str = "\n".join(f"- {q}" for q in asked)
     else:
         asked_str = ""
 
@@ -162,19 +195,28 @@ async def _generate_smart_question(
     if asked_str:
         asked_block = f"\nУже заданные вопросы (НЕ повторяй и не перефразируй их):\n{asked_str}\n"
 
+    topics_block = ""
+    if covered_topics:
+        topics_block = (
+            f"\nУже покрытые темы (НЕ задавай вопросы на эти темы):\n"
+            f"{', '.join(covered_topics)}\n"
+        )
+
     system = (
         "Ты помощник родительского бота. Сгенерируй ОДИН короткий вопрос родителю "
         "о ребёнке, чтобы узнать что-то новое и полезное для персонализации советов.\n\n"
         f"Ребёнок: {name}, {gp}, {age_months} месяцев.\n"
         f"Уже известно:\n{known_str}\n"
-        f"{asked_block}\n"
+        f"{asked_block}"
+        f"{topics_block}\n"
         "Правила:\n"
         "1. Вопрос должен быть НОВЫМ — не дублировать то, что уже известно.\n"
         "2. НЕ повторять и НЕ перефразировать уже заданные вопросы.\n"
-        "3. Подходить по возрасту.\n"
-        "4. Быть конкретным, а не абстрактным.\n"
-        "5. Использовать имя ребёнка.\n"
-        "6. Формат ответа строго JSON:\n"
+        "3. НЕ спрашивать про темы из списка покрытых тем.\n"
+        "4. Подходить по возрасту.\n"
+        "5. Быть конкретным, а не абстрактным.\n"
+        "6. Использовать имя ребёнка.\n"
+        "7. Формат ответа строго JSON:\n"
         '{"field": "child_notes", "question": "текст вопроса"}\n'
         'field — одно из: child_features, child_character, child_notes\n'
         "Если не можешь придумать вопрос, который ещё не задавался — верни:\n"
@@ -737,8 +779,9 @@ def clean_context(context: dict) -> dict:
     return context
 
 
-def update_context_field(context: dict, field: str, value: str) -> dict:
-    """Обновляет поле в child_context с timestamp."""
+def update_context_field(context: dict, field: str, value: str,
+                         question: str = "") -> dict:
+    """Обновляет поле в child_context с timestamp и QA-историей."""
     context[field] = value
     # Очищаем поле от дублей при каждом сохранении
     if field in ("child_features", "child_character", "child_notes"):
@@ -746,6 +789,21 @@ def update_context_field(context: dict, field: str, value: str) -> dict:
     if "_timestamps" not in context:
         context["_timestamps"] = {}
     context["_timestamps"][field] = datetime.utcnow().isoformat()
+
+    # QA-история: храним пары вопрос→ответ (последние 50)
+    if question and value:
+        if "_qa_history" not in context:
+            context["_qa_history"] = []
+        context["_qa_history"].append({
+            "q": question,
+            "a": value,
+            "field": field,
+            "ts": datetime.utcnow().isoformat(),
+        })
+        # Ограничиваем историю
+        if len(context["_qa_history"]) > 50:
+            context["_qa_history"] = context["_qa_history"][-50:]
+
     return context
 
 
