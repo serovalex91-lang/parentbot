@@ -192,6 +192,15 @@ async def get_last_messages(
 
     # Ищем разрыв сессии (gap > N часов между соседними сообщениями)
     from datetime import datetime, timedelta
+
+    # Проверяем: если последнее сообщение слишком старое — новая сессия, история не нужна
+    try:
+        t_latest = datetime.fromisoformat(rows[0]["created_at"])
+        if (datetime.utcnow() - t_latest) > timedelta(hours=session_gap_hours):
+            return []
+    except (ValueError, TypeError):
+        pass
+
     session_messages = [rows[0]]
     for i in range(1, len(rows)):
         try:
