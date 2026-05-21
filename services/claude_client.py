@@ -232,8 +232,18 @@ def _build_system_prompt(
 
 
 
+_TG_ALLOWED_TAGS = {
+    "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+    "code", "pre", "a", "tg-spoiler", "tg-emoji", "blockquote", "span", "br",
+}
+
+
 def _sanitize_markdown(text: str) -> str:
     """Страховка: конвертирует остатки markdown в HTML для Telegram."""
+    # Вырезаем служебные блоки модели (<thinking>...</thinking>, <reasoning>...).
+    # Telegram падает на неизвестных тегах, и пользователю их видеть не нужно.
+    text = re.sub(r"<(thinking|reasoning|scratchpad|reflection)\b[^>]*>.*?</\1>",
+                  "", text, flags=re.DOTALL | re.IGNORECASE)
     # Заголовки: # Text -> <b>Text</b>
     text = re.sub(r"^#{1,3}\s+(.+)$", lambda m: "<b>" + m.group(1) + "</b>", text, flags=re.MULTILINE)
     # Bold: **text** -> <b>text</b>
@@ -244,7 +254,12 @@ def _sanitize_markdown(text: str) -> str:
     text = re.sub(r"^-{3,}$", "", text, flags=re.MULTILINE)
     # Blockquote: > text -> text
     text = re.sub(r"^>\s?", "", text, flags=re.MULTILINE)
-    return text
+    # Финальная страховка: убираем любые теги, которых Telegram не понимает.
+    def _strip_unknown(match):
+        tag = match.group(2).lower()
+        return match.group(0) if tag in _TG_ALLOWED_TAGS else ""
+    text = re.sub(r"(</?)([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>", _strip_unknown, text)
+    return text.strip()
 
 async def ask_claude(
     config: Config,
