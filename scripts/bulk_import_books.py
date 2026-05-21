@@ -90,6 +90,7 @@ async def import_one(config, source_path: Path, original_name: str,
 
 async def main():
     config = load_config()
+    db.set_db_path(config.db_path)
     await init_db(config.db_path, config.admin_telegram_id, config.whitelist_ids)
     init_chroma(config.chroma_dir)
 
