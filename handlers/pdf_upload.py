@@ -59,11 +59,22 @@ async def _detect_age_range(chunks: list, config: Config) -> tuple[int, int]:
     return 0, 999  # fallback: любой возраст
 
 
+SUPPORTED_EXTS = (".pdf", ".epub", ".fb2", ".fb2.zip")
+
+
+def _has_supported_ext(name: str) -> bool:
+    low = (name or "").lower()
+    return any(low.endswith(ext) for ext in SUPPORTED_EXTS)
+
+
 @router.message(F.document)
 async def handle_document(message: Message, state: FSMContext, config: Config = None, db_user: dict = None):
     doc: Document = message.document
-    if not doc.mime_type or doc.mime_type != "application/pdf":
-        await message.answer("⚠️ Пожалуйста, отправь PDF-файл.")
+    name = doc.file_name or ""
+    if not _has_supported_ext(name):
+        await message.answer(
+            "⚠️ Пришли файл в формате PDF, EPUB или FB2 (можно fb2.zip)."
+        )
         return
 
     if doc.file_size and doc.file_size > MAX_PDF_SIZE:
@@ -72,11 +83,11 @@ async def handle_document(message: Message, state: FSMContext, config: Config = 
 
     await state.update_data(
         file_id=doc.file_id,
-        original_name=doc.file_name or "book.pdf",
+        original_name=name or "book.pdf",
     )
     await state.set_state(UploadPDF.waiting_age_range)
     await message.answer(
-        f"📄 Получил файл: <b>{doc.file_name}</b>\n\n"
+        f"📄 Получил файл: <b>{name}</b>\n\n"
         "Для какого возраста эта книга?",
         reply_markup=age_range_keyboard(),
     )
