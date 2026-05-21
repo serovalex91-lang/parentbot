@@ -436,3 +436,81 @@ async def validate_onboarding_answer(
     except Exception as e:
         logger.warning("Onboarding validation error: {}", e)
         return ValidationResult(True, answer.strip(), "", 0.0)
+
+
+# ─── Age-relevance tagger ─────────────────────────────────────────────────────
+
+_AGE_RELEVANCE_TAGS = ("permanent", "0-12", "12-24", "24-36", "36-60", "60-216")
+
+
+@dataclass
+class AgeRelevanceResult:
+    tag: str           # один из _AGE_RELEVANCE_TAGS
+    cost_usd: float
+
+
+async def tag_age_relevance(text: str, field: str,
+                             current_age_months: int) -> AgeRelevanceResult:
+    """Через Flash определяет возрастную релевантность записи о ребёнке.
+
+    permanent — факт не теряет актуальности (имя, аллергия, диагноз)
+    X-Y       — актуально только в диапазоне X..Y месяцев (за пределами — устарело)
+
+    Если что-то пошло не так — возвращает permanent (безопасно, не схлопнем).
+    """
+    if not text or len(text) < 5:
+        return AgeRelevanceResult("permanent", 0.0)
+
+    field_hint = {
+        "child_features": "здоровье/особенности (аллергии, диагнозы, физические особенности)",
+        "child_character": "черты характера, темперамент, поведение",
+        "child_notes": "произвольные заметки родителя",
+    }.get(field, "информация о ребёнке")
+
+    system = (
+        "Ты классифицируешь заметку родителя про ребёнка по возрастной актуальности. "
+        f"Категория записи: {field_hint}. Возраст ребёнка сейчас: {current_age_months} мес.\n\n"
+        "Возможные теги:\n"
+        "- permanent — факт не теряет актуальности (имя, аллергия, диагноз, врождённая особенность, постоянная черта характера)\n"
+        "- 0-12 — актуально только до 12 мес (ползание, грудное вскармливание младенца, гуление)\n"
+        "- 12-24 — актуально 12-24 мес (первые слова, первые шаги, переход от смеси к столу)\n"
+        "- 24-36 — актуально 24-36 мес (приучение к горшку, кризис «я сам», первые фразы)\n"
+        "- 36-60 — актуально 36-60 мес (адаптация к саду, ролевые игры)\n"
+        "- 60-216 — актуально 5+ лет (школа, более сложные ситуации)\n\n"
+        "Правила:\n"
+        "1. По умолчанию — permanent. Помечай возрастным диапазоном ТОЛЬКО если запись очевидно теряет смысл с возрастом.\n"
+        "2. Аллергия, диагноз, особенность здоровья, имя любимца, имена бабушек — всегда permanent.\n"
+        "3. Если запись похожа на мусор, вопрос боту, команду — верни тег \"junk\".\n\n"
+        "Формат ответа строго JSON, без лишнего текста:\n"
+        '{"tag": "permanent"}'
+    )
+
+    client = get_client()
+    try:
+        response = await client.chat.completions.create(
+            model=MODEL_FLASH,
+            max_tokens=30,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": text},
+            ],
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        cost = calculate_cost(MODEL_FLASH, input_tokens, output_tokens)
+
+        start, end = raw.find("{"), raw.rfind("}") + 1
+        if start < 0 or end <= start:
+            return AgeRelevanceResult("permanent", cost)
+        data = json.loads(raw[start:end])
+        tag = (data.get("tag") or "").strip().lower()
+        if tag == "junk":
+            return AgeRelevanceResult("junk", cost)
+        if tag in _AGE_RELEVANCE_TAGS:
+            return AgeRelevanceResult(tag, cost)
+        return AgeRelevanceResult("permanent", cost)
+
+    except Exception as e:
+        logger.warning("Age-relevance tagging error: {}", e)
+        return AgeRelevanceResult("permanent", 0.0)

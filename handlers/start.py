@@ -15,8 +15,9 @@ from services.onboarding import (
     get_fill_question, mark_question_asked,
     remove_context_item, update_context_item, touch_context_item,
 )
-from services.claude_client import validate_onboarding_answer
+from services.claude_client import validate_onboarding_answer, tag_age_relevance
 from utils.child_items import items_of, resolve_id, get_item, items_to_text_list
+from services.onboarding import tag_and_save_relevance, semantic_dedupe
 import db.queries as db
 
 router = Router()
@@ -565,6 +566,14 @@ async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext,
                                     age_at_save=age_months_now)
     await db.set_child_context(callback.from_user.id, context)
 
+    # Post-save: age-relevance tag (Flash) + семантический дедуп (embedder)
+    if age_months_now is not None:
+        try:
+            await tag_and_save_relevance(callback.from_user.id, field, age_months_now)
+            await semantic_dedupe(callback.from_user.id, field)
+        except Exception as e:
+            logger.warning("Post-save hooks failed: {}", e)
+
     field_labels = {
         "child_features": "особенности",
         "child_character": "характер",
@@ -704,6 +713,13 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     context = update_context_field(context, field, normalized, question=question,
                                     age_at_save=age_months)
     await db.set_child_context(message.from_user.id, context)
+
+    # Post-save: age-relevance tag (Flash) + семантический дедуп (embedder)
+    try:
+        await tag_and_save_relevance(message.from_user.id, field, age_months)
+        await semantic_dedupe(message.from_user.id, field)
+    except Exception as e:
+        logger.warning("Post-save hooks failed: {}", e)
 
     field_labels = {
         "child_features": "особенности",

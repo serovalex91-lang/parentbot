@@ -854,6 +854,140 @@ def touch_context_item(context: dict, field: str, item_id: str) -> dict:
     return context
 
 
+# ─── Async post-save hooks: age-relevance tag + semantic dedup ───────────────
+
+# Threshold для семантического дедупа (cosine distance).
+# 0.20 — консервативно: схлопываем только очень близкие записи.
+_DEDUP_THRESHOLD = 0.20
+
+
+async def tag_and_save_relevance(user_id: int, field: str,
+                                  current_age_months: int) -> Optional[float]:
+    """Берёт ПОСЛЕДНЮЮ запись поля у юзера, через Flash определяет age_relevance.
+    Сохраняет тег в item.age_relevance. Если LLM вернул 'junk' — удаляет запись.
+    Возвращает стоимость вызова Flash."""
+    if field not in ITEMIZED_FIELDS:
+        return None
+    try:
+        from services.claude_client import tag_age_relevance
+        import db.queries as db_queries
+    except Exception:
+        return None
+
+    db_user = await db_queries.get_user(user_id)
+    if not db_user or not db_user.get("child_context"):
+        return None
+    try:
+        ctx = json.loads(db_user["child_context"])
+    except Exception:
+        return None
+
+    items = items_of(ctx.get(field))
+    if not items:
+        return None
+    last = items[-1]
+    text = last.get("text") or ""
+    if not text or last.get("age_relevance"):
+        return None  # уже размечено или пусто
+
+    result = await tag_age_relevance(text, field, current_age_months)
+    cost = result.cost_usd
+
+    if result.tag == "junk":
+        # LLM считает что это мусор — удаляем тихо
+        ctx[field] = remove_item(items, last["id"])
+        await db_queries.set_child_context(user_id, ctx)
+        return cost
+
+    # Иначе — обновляем тег у записи
+    updated = []
+    for it in items:
+        if it.get("id") == last["id"]:
+            it = dict(it)
+            it["age_relevance"] = result.tag
+        updated.append(it)
+    ctx[field] = updated
+    await db_queries.set_child_context(user_id, ctx)
+    return cost
+
+
+async def semantic_dedupe(user_id: int, field: str) -> Optional[Tuple[int, int]]:
+    """Сравнивает последнюю запись со всеми остальными в поле через эмбеддинги.
+    Если cosine distance < _DEDUP_THRESHOLD — удаляет более старую запись
+    (оставляет свежую как замену). Возвращает (removed_count, total_compared)."""
+    if field not in ITEMIZED_FIELDS:
+        return None
+    try:
+        from kb.embedder import embed_texts
+        import db.queries as db_queries
+    except Exception:
+        return None
+
+    db_user = await db_queries.get_user(user_id)
+    if not db_user or not db_user.get("child_context"):
+        return None
+    try:
+        ctx = json.loads(db_user["child_context"])
+    except Exception:
+        return None
+
+    items = items_of(ctx.get(field))
+    if len(items) < 2:
+        return None
+
+    last = items[-1]
+    new_text = (last.get("text") or "").strip()
+    if len(new_text) < 10:
+        return None
+
+    others = items[:-1]
+    other_texts = [(it.get("text") or "").strip() for it in others]
+    valid_indices = [i for i, t in enumerate(other_texts) if len(t) >= 10]
+    if not valid_indices:
+        return None
+
+    texts_for_emb = [new_text] + [other_texts[i] for i in valid_indices]
+    try:
+        import asyncio as _asyncio
+        embs = await _asyncio.to_thread(embed_texts, texts_for_emb)
+    except Exception as e:
+        # logger импортируется в начале файла
+        try:
+            from loguru import logger as _logger
+            _logger.warning("Semantic dedup embed error: {}", e)
+        except Exception:
+            pass
+        return None
+
+    new_emb = embs[0]
+    duplicates_idx_in_others = []
+    for j, ovi in enumerate(valid_indices):
+        other_emb = embs[j + 1]
+        dist = _cosine_distance(new_emb, other_emb)
+        if dist < _DEDUP_THRESHOLD:
+            duplicates_idx_in_others.append(ovi)
+
+    if not duplicates_idx_in_others:
+        return (0, len(others))
+
+    # Удаляем найденные дубли (по id)
+    dup_ids = {others[idx].get("id") for idx in duplicates_idx_in_others}
+    kept = [it for it in items if it.get("id") not in dup_ids or it.get("id") == last.get("id")]
+    ctx[field] = kept
+    await db_queries.set_child_context(user_id, ctx)
+    return (len(dup_ids), len(others))
+
+
+def _cosine_distance(a: list, b: list) -> float:
+    """Cosine distance = 1 - cosine similarity. Embedder возвращает list[float]."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    if na == 0 or nb == 0:
+        return 1.0
+    return 1.0 - dot / (na * nb)
+
+
 def format_child_context_for_llm(db_user: dict) -> str:
     """Формирует контекст о ребёнке для system prompt (без служебных полей)."""
     if not db_user or not db_user.get("child_context"):
