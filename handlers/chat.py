@@ -320,12 +320,15 @@ async def _maybe_onboarding_prompt(
 
     elif action["type"] == "review":
         text = (
-            f"У меня записано про <b>{action['label'].lower()}</b>:\n"
+            f"У меня записано в разделе <b>{action['label'].lower()}</b>:\n"
             f"<i>«{action['value']}»</i>\n"
             f"(от {action['date_str']})\n\n"
-            "Всё ещё актуально?"
+            "Эта конкретная запись всё ещё актуальна?"
         )
-        await message.answer(text, reply_markup=review_keyboard(action["field"]))
+        await message.answer(
+            text,
+            reply_markup=review_keyboard(action["field"], action.get("item_id", "")),
+        )
         await db.set_last_onboarding_prompt(message.from_user.id)
 
 

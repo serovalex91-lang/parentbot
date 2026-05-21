@@ -10,8 +10,13 @@ from config import Config
 from states.fsm import Onboarding, SetDate, EditProfile, OnboardingPrompt
 from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard, onboarding_skip_keyboard, onboarding_options_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
-from services.onboarding import update_context_field, remove_context_field, format_child_summary, get_fill_question, mark_question_asked
+from services.onboarding import (
+    update_context_field, remove_context_field, format_child_summary,
+    get_fill_question, mark_question_asked,
+    remove_context_item, update_context_item, touch_context_item,
+)
 from services.claude_client import validate_onboarding_answer
+from utils.child_items import items_of, resolve_id, get_item, items_to_text_list
 import db.queries as db
 
 router = Router()
@@ -347,15 +352,23 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
     else:
         partner_style_text = "—"
 
+    def _items_summary(field: str) -> str:
+        texts = items_to_text_list(items_of(context.get(field)))
+        if not texts:
+            return "—"
+        if len(texts) <= 3:
+            return "; ".join(texts)
+        return "; ".join(texts[:3]) + f" (+{len(texts)-3} записей)"
+
     text = (
         "<b>👤 Мой профиль</b>\n\n"
         f"Роль: {role_text}\n"
         f"Возраст ребёнка: <b>{age_text}</b>\n\n"
         f"⚧ Пол: {gender_text}\n"
         f"👶 Имя: {context.get('child_name', '—')}\n"
-        f"⚠️ Особенности: {context.get('child_features', '—')}\n"
-        f"🌟 Характер: {context.get('child_character', '—')}\n"
-        f"📝 Заметки: {context.get('child_notes', '—')}\n\n"
+        f"⚠️ Особенности: {_items_summary('child_features')}\n"
+        f"🌟 Характер: {_items_summary('child_character')}\n"
+        f"📝 Заметки: {_items_summary('child_notes')}\n\n"
         f"🎨 Стиль для меня: {my_style_text}\n"
         f"💬 Стиль для партнёра: {partner_style_text}\n\n"
         "<i>Нажми кнопку чтобы изменить поле:</i>"
@@ -541,15 +554,15 @@ async def onboarding_option_selected(callback: CallbackQuery, state: FSMContext,
         await callback.answer("Ошибка выбора")
         return
 
-    # Сохраняем выбранное значение (без дубликатов)
+    # Сохраняем выбранное значение — update_context_field теперь сам APPEND-ит запись
     context = _get_context(db_user)
-    existing = context.get(field, "")
-    if existing:
-        final_value = f"{existing}; {value}"
-    else:
-        final_value = value
     question = data.get("onboarding_question", "")
-    context = update_context_field(context, field, final_value, question=question)
+    db_user_fresh = await db.get_user(callback.from_user.id)
+    birthdate = db_user_fresh.get("child_birthdate", "") if db_user_fresh else ""
+    age_now = calculate_age(birthdate) if birthdate else None
+    age_months_now = age_now.months if age_now else None
+    context = update_context_field(context, field, value, question=question,
+                                    age_at_save=age_months_now)
     await db.set_child_context(callback.from_user.id, context)
 
     field_labels = {
@@ -687,16 +700,9 @@ async def onboarding_fill_answer(message: Message, state: FSMContext, db_user: d
     await state.clear()
     normalized = result.normalized
 
-    # Если поле уже заполнено — дополняем (без дубликатов)
-    existing = context.get(field, "")
-    if existing and normalized.lower() in existing.lower():
-        final_value = existing  # уже есть
-    elif existing:
-        final_value = f"{existing}; {normalized}"
-    else:
-        final_value = normalized
-
-    context = update_context_field(context, field, final_value, question=question)
+    # APPEND через update_context_field (новый формат — список объектов)
+    context = update_context_field(context, field, normalized, question=question,
+                                    age_at_save=age_months)
     await db.set_child_context(message.from_user.id, context)
 
     field_labels = {
@@ -786,26 +792,43 @@ async def process_review(callback: CallbackQuery, state: FSMContext, db_user: di
     parts = callback.data.split(":")
     action = parts[1]   # keep, edit, delete
     field = parts[2]
+    short_id = parts[3] if len(parts) > 3 else ""
 
     context = _get_context(db_user)
     child_name = context.get("child_name", "ребёнка")
+    items = items_of(context.get(field))
+    full_id = resolve_id(items, short_id) if short_id else None
+
+    if not full_id:
+        # Legacy fallback: старый review без id — действие на всё поле
+        if action == "keep":
+            await callback.message.edit_text("Отлично, оставляю как есть.")
+        elif action == "delete":
+            context = remove_context_field(context, field)
+            await db.set_child_context(callback.from_user.id, context)
+            await callback.message.edit_text(f"Убрала из профиля {child_name}.")
+        elif action == "edit":
+            await state.set_state(OnboardingPrompt.waiting_review_edit)
+            await state.update_data(onboarding_field=field, onboarding_item_id="")
+            await callback.message.edit_text("Напиши новое значение:")
+        await callback.answer()
+        return
 
     if action == "keep":
-        # Обновляем только timestamp
-        context = update_context_field(context, field, context.get(field, ""))
+        context = touch_context_item(context, field, full_id)
         await db.set_child_context(callback.from_user.id, context)
         await callback.message.edit_text("Отлично, оставляю как есть.")
         await callback.answer()
 
     elif action == "delete":
-        context = remove_context_field(context, field)
+        context = remove_context_item(context, field, full_id)
         await db.set_child_context(callback.from_user.id, context)
-        await callback.message.edit_text(f"Убрала из профиля {child_name}.")
+        await callback.message.edit_text("Убрала эту запись.")
         await callback.answer()
 
     elif action == "edit":
         await state.set_state(OnboardingPrompt.waiting_review_edit)
-        await state.update_data(onboarding_field=field)
+        await state.update_data(onboarding_field=field, onboarding_item_id=full_id)
         await callback.message.edit_text("Напиши новое значение:")
         await callback.answer()
 
@@ -863,7 +886,16 @@ async def onboarding_review_edit(message: Message, state: FSMContext, db_user: d
 
     await state.clear()
     normalized = result.normalized
-    context = update_context_field(context, field, normalized)
+
+    item_id = data.get("onboarding_item_id") or ""
+    if item_id:
+        # Точечная замена записи (review:edit конкретной записи)
+        context = update_context_item(context, field, item_id, normalized,
+                                       age_at_save=age_months)
+    else:
+        # Legacy fallback: добавляем как новую запись
+        context = update_context_field(context, field, normalized,
+                                        age_at_save=age_months)
     await db.set_child_context(message.from_user.id, context)
 
     field_labels = {

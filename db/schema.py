@@ -1,3 +1,6 @@
+import json
+import re
+import uuid
 import aiosqlite
 from loguru import logger
 from typing import List
@@ -130,6 +133,60 @@ async def _migrate_role_constraint(db):
     logger.info("Миграция ролей завершена")
 
 
+_ITEMIZED_FIELDS = ("child_features", "child_character", "child_notes")
+_SCHEMA_VERSION = 2
+
+
+async def _migrate_child_context_to_list(db):
+    """Конвертирует child_features/character/notes из строки в список объектов.
+    Идемпотентно: помечает контекст _schema_version=2 после миграции."""
+    async with db.execute("SELECT id, child_context FROM users WHERE child_context IS NOT NULL") as cur:
+        rows = await cur.fetchall()
+    if not rows:
+        return
+    migrated = 0
+    for user_id, ctx_str in rows:
+        if not ctx_str:
+            continue
+        try:
+            ctx = json.loads(ctx_str)
+        except Exception:
+            logger.warning("Битый JSON в child_context user={}, пропускаю", user_id)
+            continue
+        if ctx.get("_schema_version") == _SCHEMA_VERSION:
+            continue
+        timestamps = ctx.get("_timestamps", {}) or {}
+        changed = False
+        for field in _ITEMIZED_FIELDS:
+            value = ctx.get(field)
+            if not value or isinstance(value, list):
+                continue
+            ts = timestamps.get(field)
+            parts = [p.strip() for p in re.split(r"[;\n]+", str(value)) if p.strip()]
+            ctx[field] = [
+                {
+                    "id": str(uuid.uuid4()),
+                    "text": p,
+                    "ts": ts,
+                    "age_at_save": None,
+                    "age_relevance": None,
+                }
+                for p in parts
+            ]
+            changed = True
+        ctx["_schema_version"] = _SCHEMA_VERSION
+        # _timestamps больше не нужен (у каждой записи свой ts), но не удаляем — для bw-compat
+        await db.execute(
+            "UPDATE users SET child_context=? WHERE id=?",
+            (json.dumps(ctx, ensure_ascii=False), user_id),
+        )
+        if changed:
+            migrated += 1
+    if migrated:
+        await db.commit()
+        logger.info("Миграция child_context → list: обновлено {} пользователей", migrated)
+
+
 async def init_db(db_path: str, admin_id: int, whitelist_ids: List[int]):
     async with aiosqlite.connect(db_path) as db:
         # WAL mode для лучшей конкурентности
@@ -138,6 +195,7 @@ async def init_db(db_path: str, admin_id: int, whitelist_ids: List[int]):
         await db.executescript(SCHEMA)
         await _migrate_role_constraint(db)
         await _migrate_add_onboarding_prompt(db)
+        await _migrate_child_context_to_list(db)
 
         for tg_id in whitelist_ids:
             await db.execute(

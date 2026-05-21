@@ -11,6 +11,11 @@ import random
 from datetime import datetime, date, timedelta
 from typing import Optional, Tuple, Dict, List
 
+from utils.child_items import (
+    items_of, add_item, remove_item, update_item, touch_item, get_item,
+    items_to_text_list, ITEMIZED_FIELDS, SCHEMA_VERSION,
+)
+
 # Минимальный интервал между промптами (дни)
 PROMPT_INTERVAL_DAYS = 7  # раз в неделю после FAST-фазы (новый вопрос)
 REVIEW_INTERVAL_DAYS = 3  # через 3 дня после fill — review (если есть устаревшие)
@@ -145,10 +150,10 @@ _TOPIC_KEYWORDS = {
 def _extract_covered_topics(asked_questions: list, context: dict) -> list:
     """Определяет темы, которые уже покрыты вопросами и известными данными."""
     all_text = " ".join(asked_questions).lower()
-    for field in ("child_features", "child_character", "child_notes"):
-        val = context.get(field, "")
-        if val:
-            all_text += " " + val.lower()
+    for field in ITEMIZED_FIELDS:
+        texts = items_to_text_list(items_of(context.get(field)))
+        if texts:
+            all_text += " " + " ".join(texts).lower()
 
     covered = []
     for topic, keywords in _TOPIC_KEYWORDS.items():
@@ -169,12 +174,15 @@ async def _generate_smart_question(
         return None
 
     known_parts = []
-    if context.get("child_features"):
-        known_parts.append(f"Особенности: {context['child_features']}")
-    if context.get("child_character"):
-        known_parts.append(f"Характер: {context['child_character']}")
-    if context.get("child_notes"):
-        known_parts.append(f"Заметки: {context['child_notes']}")
+    field_labels = {
+        "child_features": "Особенности",
+        "child_character": "Характер",
+        "child_notes": "Заметки",
+    }
+    for field, label in field_labels.items():
+        texts = items_to_text_list(items_of(context.get(field)))
+        if texts:
+            known_parts.append(f"{label}: {'; '.join(texts)}")
     known_str = "\n".join(known_parts) if known_parts else "Пока ничего не записано."
 
     # Собираем ВСЮ историю заданных вопросов (не обрезаем)
@@ -605,8 +613,10 @@ async def get_fill_question(
 
 def get_review_question(
     db_user: dict,
-) -> Optional[Tuple[str, str, str, str]]:
-    """Возвращает (field, current_value, field_label, date_str) для ревизии.
+    current_age_months: Optional[int] = None,
+) -> Optional[Tuple[str, str, str, str, str]]:
+    """Возвращает (field, item_id, item_text, field_label, date_str) для ревизии.
+    Если current_age_months задан — также проверяет age_relevance.
     None если нечего проверять."""
     context = {}
     if db_user.get("child_context"):
@@ -615,45 +625,74 @@ def get_review_question(
         except Exception:
             pass
 
-    timestamps = context.get("_timestamps", {})
     now = datetime.utcnow()
-
     field_labels = {
         "child_features": "Особенности/здоровье",
         "child_character": "Характер",
         "child_notes": "Заметки",
     }
 
-    stale_fields = []
+    # Собираем кандидатов: (priority, field, item, date_display)
+    # priority: 0 = age-outdated (срочно), 1 = stale by time, 2 = no date
+    candidates: List[Tuple[int, str, dict, str]] = []
     for field, threshold_days in STALE_THRESHOLDS.items():
-        value = context.get(field)
-        if not value:
-            continue
-        ts_str = timestamps.get(field)
-        if not ts_str:
-            # Нет даты — считаем устаревшим
-            stale_fields.append((field, value, field_labels.get(field, field), "дата неизвестна"))
-            continue
-        try:
-            ts = datetime.fromisoformat(ts_str)
-            if now - ts > timedelta(days=threshold_days):
-                date_display = ts.strftime("%d.%m.%Y")
-                stale_fields.append((field, value, field_labels.get(field, field), date_display))
-        except (ValueError, TypeError):
-            stale_fields.append((field, value, field_labels.get(field, field), "дата неизвестна"))
+        items = items_of(context.get(field))
+        for item in items:
+            ts_str = item.get("ts")
+            date_display = "дата неизвестна"
+            is_stale_time = False
+            if ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str)
+                    date_display = ts.strftime("%d.%m.%Y")
+                    if now - ts > timedelta(days=threshold_days):
+                        is_stale_time = True
+                except (ValueError, TypeError):
+                    pass
+            else:
+                is_stale_time = True
 
-    if not stale_fields:
+            is_age_outdated = _is_age_outdated(item, current_age_months)
+
+            if is_age_outdated:
+                candidates.append((0, field, item, date_display))
+            elif is_stale_time and ts_str:
+                candidates.append((1, field, item, date_display))
+            elif is_stale_time:
+                candidates.append((2, field, item, date_display))
+
+    if not candidates:
         return None
 
-    # Сортируем по старости (самые старые первыми, "дата неизвестна" — в начало)
-    def _sort_key(item):
-        date_str = item[3]
-        if date_str == "дата неизвестна":
-            return ""  # самый старый
-        return date_str  # DD.MM.YYYY — сортировка строковая, ок для одного формата
+    candidates.sort(key=lambda x: (x[0], x[3] or ""))
+    _, field, item, date_display = candidates[0]
+    return (
+        field,
+        item.get("id", ""),
+        item.get("text", ""),
+        field_labels.get(field, field),
+        date_display,
+    )
 
-    stale_fields.sort(key=_sort_key)
-    return stale_fields[0]
+
+def _is_age_outdated(item: dict, current_age_months: Optional[int]) -> bool:
+    """Проверяет помечен ли возрастной тег записи как просроченный.
+    age_relevance формата: "permanent" | "0-12" | "12-24" | "24-36" | "36-60" | "60+"."""
+    if current_age_months is None:
+        return False
+    relevance = (item.get("age_relevance") or "").strip().lower()
+    if not relevance or relevance == "permanent":
+        return False
+    if relevance.endswith("+"):
+        return False  # бессрочно вверх
+    if "-" not in relevance:
+        return False
+    try:
+        lo, hi = relevance.split("-", 1)
+        hi_months = int(hi)
+        return current_age_months > hi_months
+    except (ValueError, TypeError):
+        return False
 
 
 async def pick_onboarding_action(
@@ -696,13 +735,14 @@ async def pick_onboarding_action(
 
     if last_type == "fill":
         # Последний был fill → сейчас очередь review (если есть устаревшие)
-        review = get_review_question(db_user)
+        review = get_review_question(db_user, current_age_months=age_months)
         if review:
-            field, value, label, date_str = review
+            field, item_id, item_text, label, date_str = review
             return {
                 "type": "review",
                 "field": field,
-                "value": value,
+                "item_id": item_id,
+                "value": item_text,
                 "label": label,
                 "date_str": date_str,
             }
@@ -732,66 +772,38 @@ def mark_question_asked(context: dict, question_template: str) -> dict:
     return context
 
 
-def _clean_field_value(value: str) -> str:
-    """Очищает значение поля: убирает дубли, команды, мусор."""
-    if not value:
-        return value
-
-    # Разбиваем по разделителям (; и .\n)
-    parts = [p.strip().rstrip(".") for p in value.replace(".\n", ";").split(";")]
-    # Убираем пустые, команды (/admin и т.д.)
-    parts = [p for p in parts if p and not p.startswith("/")]
-
-    # Дедупликация: убираем записи, которые уже содержатся в другой (более полной)
-    unique = []
-    for p in parts:
-        p_lower = p.lower()
-        # Пропускаем если эта запись уже есть или является частью другой
-        is_dup = False
-        for existing in unique:
-            if p_lower == existing.lower():
-                is_dup = True
-                break
-            # Если новая запись — подстрока уже добавленной (более полной)
-            if p_lower in existing.lower():
-                is_dup = True
-                break
-        if is_dup:
-            continue
-        # Если новая запись длиннее и содержит уже добавленную — заменяем
-        replaced = False
-        for i, existing in enumerate(unique):
-            if existing.lower() in p_lower and existing.lower() != p_lower:
-                unique[i] = p
-                replaced = True
-                break
-        if not replaced:
-            unique.append(p)
-
-    return "; ".join(unique)
-
-
 def clean_context(context: dict) -> dict:
-    """Очищает все текстовые поля контекста от дублей и мусора."""
-    for field in ("child_features", "child_character", "child_notes"):
-        if context.get(field):
-            context[field] = _clean_field_value(context[field])
+    """Нормализует поля контекста: убеждается что features/character/notes — списки.
+    Старая дедупликация заменена на нормализацию через items_of."""
+    for field in ITEMIZED_FIELDS:
+        if context.get(field) is not None:
+            context[field] = items_of(context[field])
+    context["_schema_version"] = SCHEMA_VERSION
     return context
 
 
 def update_context_field(context: dict, field: str, value: str,
-                         question: str = "") -> dict:
-    """Обновляет поле в child_context с timestamp и QA-историей."""
-    context[field] = value
-    # Очищаем поле от дублей при каждом сохранении
-    if field in ("child_features", "child_character", "child_notes"):
-        context[field] = _clean_field_value(context[field])
-    if "_timestamps" not in context:
-        context["_timestamps"] = {}
-    context["_timestamps"][field] = datetime.utcnow().isoformat()
+                         question: str = "",
+                         age_at_save: Optional[int] = None) -> dict:
+    """Добавляет новую запись в список поля.
+
+    Для itemized полей (features/character/notes) — APPEND новой записи.
+    Для остальных полей (child_name, my_style и т.д.) — REPLACE.
+    """
+    value = (value or "").strip()
+    if not value:
+        return context
+
+    if field in ITEMIZED_FIELDS:
+        current = items_of(context.get(field))
+        context[field] = add_item(current, value, age_at_save=age_at_save)
+    else:
+        context[field] = value
+
+    context["_schema_version"] = SCHEMA_VERSION
 
     # QA-история: храним пары вопрос→ответ (последние 50)
-    if question and value:
+    if question:
         if "_qa_history" not in context:
             context["_qa_history"] = []
         context["_qa_history"].append({
@@ -800,7 +812,6 @@ def update_context_field(context: dict, field: str, value: str,
             "field": field,
             "ts": datetime.utcnow().isoformat(),
         })
-        # Ограничиваем историю
         if len(context["_qa_history"]) > 50:
             context["_qa_history"] = context["_qa_history"][-50:]
 
@@ -808,10 +819,38 @@ def update_context_field(context: dict, field: str, value: str,
 
 
 def remove_context_field(context: dict, field: str) -> dict:
-    """Удаляет поле из child_context и его timestamp."""
+    """Удаляет всё поле целиком (для itemized — очищает список)."""
     context.pop(field, None)
     ts = context.get("_timestamps", {})
     ts.pop(field, None)
+    return context
+
+
+def remove_context_item(context: dict, field: str, item_id: str) -> dict:
+    """Удаляет одну запись по id из списочного поля."""
+    if field not in ITEMIZED_FIELDS:
+        return context
+    current = items_of(context.get(field))
+    context[field] = remove_item(current, item_id)
+    return context
+
+
+def update_context_item(context: dict, field: str, item_id: str,
+                        new_text: str, age_at_save: Optional[int] = None) -> dict:
+    """Меняет text у конкретной записи по id."""
+    if field not in ITEMIZED_FIELDS:
+        return context
+    current = items_of(context.get(field))
+    context[field] = update_item(current, item_id, new_text, age_at_save)
+    return context
+
+
+def touch_context_item(context: dict, field: str, item_id: str) -> dict:
+    """Обновляет ts записи без изменения текста (review:keep)."""
+    if field not in ITEMIZED_FIELDS:
+        return context
+    current = items_of(context.get(field))
+    context[field] = touch_item(current, item_id)
     return context
 
 
@@ -821,19 +860,18 @@ def format_child_context_for_llm(db_user: dict) -> str:
         return ""
     try:
         ctx = json.loads(db_user["child_context"])
-        ctx = clean_context(ctx)
         parts = []
         if ctx.get("child_name"):
             parts.append(f"Имя: {ctx['child_name']}")
-        if ctx.get("child_features"):
-            items = [i.strip() for i in ctx["child_features"].split(";") if i.strip()]
-            parts.append("Здоровье/особенности:\n" + "\n".join(f"- {i}" for i in items))
-        if ctx.get("child_character"):
-            items = [i.strip() for i in ctx["child_character"].split(";") if i.strip()]
-            parts.append("Характер:\n" + "\n".join(f"- {i}" for i in items))
-        if ctx.get("child_notes"):
-            items = [i.strip() for i in ctx["child_notes"].split(";") if i.strip()]
-            parts.append("Заметки:\n" + "\n".join(f"- {i}" for i in items))
+        labels = {
+            "child_features": "Здоровье/особенности",
+            "child_character": "Характер",
+            "child_notes": "Заметки",
+        }
+        for field, label in labels.items():
+            texts = items_to_text_list(items_of(ctx.get(field)))
+            if texts:
+                parts.append(f"{label}:\n" + "\n".join(f"- {t}" for t in texts))
         return "\n".join(parts)
     except Exception:
         return ""
@@ -865,19 +903,19 @@ def format_child_summary(db_user: dict, age_display: str = "") -> str:
         header += f" — {gender}"
     parts.append(header)
 
-    if context.get("child_features"):
-        items = [i.strip() for i in context["child_features"].split(";") if i.strip()]
-        parts.append("\n<b>Здоровье и особенности:</b>\n" + "\n".join(f"• {i}" for i in items))
+    labels = [
+        ("child_features", "Здоровье и особенности"),
+        ("child_character", "Характер"),
+        ("child_notes", "Заметки"),
+    ]
+    has_any = False
+    for field, label in labels:
+        texts = items_to_text_list(items_of(context.get(field)))
+        if texts:
+            has_any = True
+            parts.append(f"\n<b>{label}:</b>\n" + "\n".join(f"• {t}" for t in texts))
 
-    if context.get("child_character"):
-        items = [i.strip() for i in context["child_character"].split(";") if i.strip()]
-        parts.append("\n<b>Характер:</b>\n" + "\n".join(f"• {i}" for i in items))
-
-    if context.get("child_notes"):
-        items = [i.strip() for i in context["child_notes"].split(";") if i.strip()]
-        parts.append("\n<b>Заметки:</b>\n" + "\n".join(f"• {i}" for i in items))
-
-    if not any(context.get(f) for f in ("child_features", "child_character", "child_notes")):
+    if not has_any:
         parts.append("\n<i>Пока ничего не записано. Заполни профиль или отвечай на мои вопросы — информация будет накапливаться.</i>")
 
     return "\n".join(parts)

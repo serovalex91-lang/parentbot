@@ -179,11 +179,14 @@ def onboarding_options_keyboard(options: list) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def review_keyboard(field: str) -> InlineKeyboardMarkup:
+def review_keyboard(field: str, item_id: str = "") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Актуально", callback_data=f"review:keep:{field}")
-    builder.button(text="Изменить", callback_data=f"review:edit:{field}")
-    builder.button(text="Убрать", callback_data=f"review:delete:{field}")
+    # Telegram callback_data <= 64 байта — используем 8-символьный префикс id.
+    short_id = (item_id or "")[:8]
+    suffix = f"{field}:{short_id}" if short_id else field
+    builder.button(text="Актуально", callback_data=f"review:keep:{suffix}")
+    builder.button(text="Изменить", callback_data=f"review:edit:{suffix}")
+    builder.button(text="Убрать", callback_data=f"review:delete:{suffix}")
     builder.adjust(3)
     return builder.as_markup()
 
