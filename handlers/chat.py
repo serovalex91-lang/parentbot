@@ -6,8 +6,9 @@ from loguru import logger
 
 from config import Config
 from utils.age_calc import calculate_age
-from kb.rag_engine import search_kb, format_chunks_for_prompt
+from kb.rag_engine import search_kb, format_chunks_for_prompt, get_book_chunks
 from services.claude_client import ask_claude
+from utils.library import format_book_list, detect_book_mention
 from services.brave_search import search_brave
 from services.transcribe import transcribe_voice
 from services.onboarding import should_prompt, pick_onboarding_action, mark_question_asked
@@ -136,11 +137,16 @@ async def handle_chat(message: Message, bot: Bot, state: FSMContext, config: Con
         max_hist = config.max_history_messages if config else 20
         gap_hours = config.session_gap_hours if config else 4
 
-        excluded_ids, history, child_context = await asyncio.gather(
+        excluded_ids, history, child_context, all_shared = await asyncio.gather(
             db.get_excluded_book_ids(user_id),
             db.get_last_messages(user_id, limit=max_hist, session_gap_hours=gap_hours),
             _get_child_context_str(db_user),
+            db.get_shared_books(),
         )
+
+        # Список видимых книг — для system prompt
+        visible_books = [b for b in all_shared if b["id"] not in set(excluded_ids)]
+        library_list = format_book_list(visible_books)
 
         # RAG поиск (async, в отдельном потоке)
         chunks = await search_kb(
@@ -150,6 +156,16 @@ async def handle_chat(message: Message, bot: Bot, state: FSMContext, config: Con
             excluded_book_ids=excluded_ids,
             n_results=5,
         )
+
+        # Если пользователь явно упомянул книгу — подмешиваем её чанки в начало
+        mentioned_id = detect_book_mention(user_text, visible_books)
+        if mentioned_id is not None:
+            logger.info("Detected book mention: book_id={} in query='{}'", mentioned_id, user_text[:50])
+            extra = await get_book_chunks(mentioned_id, n=5)
+            existing_docs = {c["document"] for c in chunks}
+            extra_new = [c for c in extra if c["document"] not in existing_docs]
+            chunks = extra_new + chunks
+
         kb_text = format_chunks_for_prompt(chunks)
 
         if not chunks:
@@ -196,6 +212,7 @@ async def handle_chat(message: Message, bot: Bot, state: FSMContext, config: Con
                 brave_results=brave_text,
                 my_style=my_style,
                 partner_style=partner_style,
+                library_list=library_list,
             )
         except Exception as e:
             logger.error("Ошибка Claude API для user={}: {}", user_id, e)

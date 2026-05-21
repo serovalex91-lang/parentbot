@@ -121,6 +121,7 @@ def _build_system_prompt(
     brave_results: str = "",
     my_style: str = "",
     partner_style: str = "",
+    library_list: str = "",
 ) -> str:
     role_map = {
         "papa": "папе",
@@ -190,11 +191,25 @@ def _build_system_prompt(
             "Данные могут быть субъективны или слегка устареть. Опирайся на них как на контекст, не как на диагноз.\n"
         )
 
+    library_block = ""
+    if library_list:
+        library_block = (
+            f"\nДОСТУПНЫЕ КНИГИ В БИБЛИОТЕКЕ (полные тексты загружены, можешь ссылаться на них):\n"
+            f"{library_list}\n"
+            "Если пользователь спросил «что у тебя в библиотеке» или про конкретную книгу из этого "
+            "списка — отвечай уверенно, опираясь на свои знания об этих изданиях. Не говори «у меня "
+            "только краткое содержание» — книги загружены целиком.\n"
+        )
+
     kb_block = ""
     if kb_chunks:
-        kb_block = f"\nКОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{kb_chunks}\n"
+        kb_block = f"\nКОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ (релевантные фрагменты под текущий запрос):\n{kb_chunks}\n"
     else:
-        kb_block = "\n[База знаний не содержит релевантных фрагментов для этого запроса.]\n"
+        kb_block = (
+            "\n[Поиск по эмбеддингам не вернул точных фрагментов под этот запрос. "
+            "Это НЕ значит что книги пусты — список загруженных книг выше. "
+            "Опирайся на свои общие знания о перечисленных книгах.]\n"
+        )
 
     internet_block = ""
     if brave_results:
@@ -228,7 +243,7 @@ def _build_system_prompt(
 - НИКОГДА не проси пользователя сообщить дату — ты уже знаешь сегодняшнюю дату и возраст ребёнка.
 
 Структура ответа: начинай с объяснения что чувствует ребёнок и почему (с точки зрения развития мозга). Завершай конкретным маленьким шагом.
-{kb_block}{internet_block}"""
+{library_block}{kb_block}{internet_block}"""
 
 
 
@@ -273,6 +288,7 @@ async def ask_claude(
     brave_results: str = "",
     my_style: str = "",
     partner_style: str = "",
+    library_list: str = "",
     temperature: float | None = None,
 ) -> ClaudeResponse:
     client = get_client()
@@ -286,6 +302,7 @@ async def ask_claude(
         brave_results=brave_results,
         my_style=my_style,
         partner_style=partner_style,
+        library_list=library_list,
     )
 
     messages = [{"role": "system", "content": system_prompt}]

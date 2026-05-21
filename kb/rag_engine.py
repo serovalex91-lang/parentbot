@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 
 from kb.embedder import embed_query
-from kb.chroma_client import query_collection
+from kb.chroma_client import query_collection, get_client
 
 
 def _search_kb_sync(
@@ -84,3 +84,35 @@ def format_chunks_for_prompt(chunks: List[Dict[str, Any]]) -> str:
     for i, chunk in enumerate(chunks, 1):
         parts.append(f"[{i}] {chunk['document']}")
     return "\n\n".join(parts)
+
+
+def _get_book_chunks_sync(book_id: int, n: int = 5) -> List[Dict[str, Any]]:
+    """Достаёт N произвольных чанков конкретной книги из shared_kb (без эмбеддингов).
+    Используется когда пользователь явно спросил про конкретную книгу."""
+    try:
+        collection = get_client().get_or_create_collection(
+            name="shared_kb",
+            metadata={"hnsw:space": "cosine"},
+        )
+    except Exception as e:
+        logger.warning("Не удалось открыть shared коллекцию: {}", e)
+        return []
+    try:
+        results = collection.get(
+            where={"book_id": book_id},
+            limit=n,
+            include=["documents", "metadatas"],
+        )
+    except Exception as e:
+        logger.warning("Ошибка get по book_id={}: {}", book_id, e)
+        return []
+    docs = results.get("documents", []) or []
+    metas = results.get("metadatas", []) or []
+    items = []
+    for doc, meta in zip(docs, metas):
+        items.append({"document": doc, "metadata": meta, "distance": 0.0})
+    return items
+
+
+async def get_book_chunks(book_id: int, n: int = 5) -> List[Dict[str, Any]]:
+    return await asyncio.to_thread(_get_book_chunks_sync, book_id, n)
