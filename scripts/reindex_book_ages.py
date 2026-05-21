@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT))
 from loguru import logger
 
 from config import load_config
-from kb.chroma_client import get_client as get_chroma
+from kb.chroma_client import get_client as get_chroma, init_chroma
 
 
 AGE_PROMPT = (
@@ -64,6 +64,7 @@ async def detect_age(sample: str) -> tuple[int, int]:
 
 async def main(dry_run: bool = False, force_all: bool = False):
     config = load_config()
+    init_chroma(config.chroma_dir)
     conn = sqlite3.connect(config.db_path)
     conn.row_factory = sqlite3.Row
 
