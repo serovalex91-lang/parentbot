@@ -42,11 +42,23 @@ TO_IMPORT = [
     ("child_of_mine_satter.epub",
      "Child of Mine — Ellyn Satter.epub",
      0, 72),
+    ("emotional_intelligence_child_gottman.epub",
+     "Эмоциональный интеллект ребёнка — Готтман, Деклер.epub",
+     24, 168),
 ]
 
 
 async def import_one(config, source_path: Path, original_name: str,
                      age_min: int, age_max: int):
+    # Skip if already imported (same original_name in shared scope)
+    conn = await db.get_db()
+    cur = await conn.execute(
+        "SELECT id FROM books WHERE original_name=? AND scope='shared'",
+        (original_name,),
+    )
+    if await cur.fetchone():
+        logger.info("⊘ уже в БД: {}", original_name)
+        return
     save_dir = Path(config.data_dir) / "shared_kb"
     save_dir.mkdir(parents=True, exist_ok=True)
 
