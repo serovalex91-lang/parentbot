@@ -2,6 +2,7 @@
 Уведомление админа о новых коммитах при старте бота.
 Сравнивает HEAD с сохранённым хешем, формирует changelog.
 """
+import html
 import os
 import subprocess
 from aiogram import Bot
@@ -58,7 +59,7 @@ def _format_changelog(commits: list[dict]) -> str:
             if subj.startswith(prefix):
                 subj = subj[len(prefix):]
                 break
-        lines.append(f"[+] {subj}")
+        lines.append(f"[+] {html.escape(subj)}")
     return "\n".join(lines)
 
 
