@@ -285,6 +285,9 @@ async def cmd_broadcast_parents(message: Message, bot: Bot, db_user: dict = None
 @router.message(F.text == "📖 Моя библиотека")
 async def my_library(message: Message, db_user: dict = None):
     if not db_user:
+        await message.answer(
+            "Сначала пройди настройку через /start — тогда библиотека станет доступна."
+        )
         return
     user_id = message.from_user.id
     shared_books = await db.get_shared_books()

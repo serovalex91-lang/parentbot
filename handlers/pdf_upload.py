@@ -45,12 +45,12 @@ async def _detect_age_range(chunks: list, config: Config) -> tuple[int, int]:
     )
     try:
         client = get_client()
-        response = await client.messages.create(
-            model=config.claude_model,
+        response = await client.chat.completions.create(
+            model="google/gemini-2.5-flash",
             max_tokens=20,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = response.content[0].text.strip()
+        text = response.choices[0].message.content.strip()
         match = re.search(r"(\d+):(\d+)", text)
         if match:
             return int(match.group(1)), int(match.group(2))
