@@ -1,3 +1,5 @@
+import re
+from pathlib import Path
 import os
 import json
 from aiogram import Router, F, Bot
@@ -8,7 +10,7 @@ from loguru import logger
 
 from config import Config
 from states.fsm import AdminPanel
-from keyboards.main_kb import library_keyboard, confirm_delete_keyboard, admin_keyboard, update_broadcast_keyboard
+from keyboards.main_kb import library_keyboard, confirm_delete_keyboard, admin_keyboard, update_broadcast_keyboard, announce_keyboard
 from kb.chroma_client import delete_chunks
 from services.update_notifier import get_recent_changelog
 import db.queries as db
@@ -439,6 +441,56 @@ async def update_dismiss(callback: CallbackQuery, db_user: dict = None):
     await callback.message.edit_text(
         callback.message.text + "\n\n<i>Рассылка отклонена.</i>"
     )
+    await callback.answer("Отклонено")
+
+
+ANNOUNCE_DIR = Path("data/announcements")
+
+
+def _announce_path(announce_id: str) -> Path:
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", announce_id)[:64]
+    return ANNOUNCE_DIR / f"{safe}.txt"
+
+
+@router.callback_query(F.data.startswith("announce:send:"))
+async def announce_send(callback: CallbackQuery, bot: Bot, db_user: dict = None):
+    """Разослать готовый анонс из файла всем активным юзерам."""
+    if not _is_admin(db_user):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+    announce_id = callback.data.split(":", 2)[2]
+    path = _announce_path(announce_id)
+    if not path.exists():
+        await callback.answer("Анонс не найден или уже отправлен.", show_alert=True)
+        return
+
+    text = path.read_text(encoding="utf-8")
+    users = await db.get_all_active_users()
+    sent, failed = 0, 0
+    for user in users:
+        if user["id"] == callback.from_user.id:
+            continue  # не дублируем админу
+        try:
+            await bot.send_message(user["id"], text)
+            sent += 1
+        except Exception as e:
+            logger.warning("Announce broadcast failed for {}: {}", user["id"], e)
+            failed += 1
+
+    path.unlink(missing_ok=True)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(f"✅ Анонс отправлен: {sent}, ошибок: {failed}")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("announce:dismiss:"))
+async def announce_dismiss(callback: CallbackQuery, db_user: dict = None):
+    if not _is_admin(db_user):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+    announce_id = callback.data.split(":", 2)[2]
+    _announce_path(announce_id).unlink(missing_ok=True)
+    await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer("Отклонено")
 
 

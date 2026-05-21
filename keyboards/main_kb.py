@@ -197,6 +197,15 @@ def update_broadcast_keyboard(changelog: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def announce_keyboard(announce_id: str) -> InlineKeyboardMarkup:
+    """Кнопки для готового анонса с предзагруженным текстом."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📢 Отправить всем", callback_data=f"announce:send:{announce_id}")
+    builder.button(text="❌ Отклонить", callback_data=f"announce:dismiss:{announce_id}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def access_request_keyboard(user_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Добавить", callback_data=f"access:approve:{user_id}")
