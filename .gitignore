@@ -11,3 +11,4 @@ data/
 db/*.db
 staging/
 CLAUDE.md
+_backup_brainserver_*/
