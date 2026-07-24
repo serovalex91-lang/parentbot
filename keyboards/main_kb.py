@@ -191,6 +191,25 @@ def review_keyboard(field: str, item_id: str = "") -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def items_edit_keyboard(field: str, items: list) -> InlineKeyboardMarkup:
+    """Список записей поля с кнопками правки/удаления на каждой.
+
+    ✏️ переиспользует review:edit (точечная правка по id + валидация),
+    🗑 — pdel:field:id (удаляет и перерисовывает список).
+    """
+    builder = InlineKeyboardBuilder()
+    for it in items:
+        text = (it.get("text") or "").strip()
+        short_id = (it.get("id") or "")[:8]
+        preview = text if len(text) <= 30 else text[:29] + "…"
+        builder.button(text=f"✏️ {preview}", callback_data=f"review:edit:{field}:{short_id}")
+        builder.button(text="🗑", callback_data=f"pdel:{field}:{short_id}")
+    builder.button(text="➕ Добавить запись", callback_data=f"padd:{field}")
+    # Каждая запись — своя строка (текст + корзина), кнопка добавления отдельно
+    builder.adjust(*([2] * len(items) + [1]))
+    return builder.as_markup()
+
+
 def update_broadcast_keyboard(changelog: str) -> InlineKeyboardMarkup:
     """Кнопки для уведомления админа об обновлении."""
     builder = InlineKeyboardBuilder()

@@ -8,7 +8,7 @@ from loguru import logger
 
 from config import Config
 from states.fsm import Onboarding, SetDate, EditProfile, OnboardingPrompt
-from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard, onboarding_skip_keyboard, onboarding_options_keyboard
+from keyboards.main_kb import main_menu, role_keyboard, profile_keyboard, gender_keyboard, style_keyboard, access_request_keyboard, onboarding_skip_keyboard, onboarding_options_keyboard, items_edit_keyboard
 from utils.age_calc import parse_birthdate, calculate_age
 from services.onboarding import (
     update_context_field, remove_context_field, format_child_summary,
@@ -378,7 +378,7 @@ async def cmd_myprofile(message: Message, db_user: dict = None):
 
 
 @router.callback_query(F.data.startswith("profile_edit:"))
-async def profile_edit_start(callback: CallbackQuery, state: FSMContext):
+async def profile_edit_start(callback: CallbackQuery, state: FSMContext, db_user: dict = None):
     field = callback.data.split(":")[1]
 
     if field == "role":
@@ -424,6 +424,34 @@ async def profile_edit_start(callback: CallbackQuery, state: FSMContext):
         "child_character": "характер ребёнка",
         "child_notes": "дополнительные заметки",
     }
+
+    # Списочные поля: показываем записи с кнопками ✏️/🗑 на каждой.
+    # Так можно точечно поправить/удалить одну запись, а не только добавить новую.
+    itemized = {
+        "child_features": "⚠️ Особенности",
+        "child_character": "🌟 Характер",
+        "child_notes": "📝 Заметки",
+    }
+    if field in itemized:
+        context = _get_context(db_user)
+        items = items_of(context.get(field))
+        if items:
+            await callback.message.answer(
+                f"<b>{itemized[field]}</b>\n\n"
+                "✏️ — изменить запись, 🗑 — удалить, ➕ — добавить новую:",
+                reply_markup=items_edit_keyboard(field, items),
+            )
+            await callback.answer()
+            return
+        # Записей ещё нет — сразу режим добавления
+        await state.set_state(EditProfile.waiting_value)
+        await state.update_data(field=field)
+        await callback.message.answer(
+            f"✏️ Записей пока нет. Введи {field_names.get(field, field)}:"
+        )
+        await callback.answer()
+        return
+
     await state.set_state(EditProfile.waiting_value)
     await state.update_data(field=field)
     await callback.message.answer(
@@ -488,6 +516,63 @@ async def profile_edit_save(message: Message, state: FSMContext, db_user: dict =
     await db.set_child_context(message.from_user.id, context)
     await state.clear()
     await message.answer("✅ Профиль обновлён!")
+
+
+@router.callback_query(F.data.startswith("padd:"))
+async def profile_item_add(callback: CallbackQuery, state: FSMContext):
+    """Добавить новую запись в списочное поле (features/character/notes)."""
+    field = callback.data.split(":")[1]
+    field_names = {
+        "child_features": "новую особенность",
+        "child_character": "черту характера",
+        "child_notes": "заметку",
+    }
+    await state.set_state(EditProfile.waiting_value)
+    await state.update_data(field=field)
+    await callback.message.answer(f"✏️ Введи {field_names.get(field, field)}:")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pdel:"))
+async def profile_item_delete(callback: CallbackQuery, db_user: dict = None):
+    """Удалить одну запись по id и перерисовать список."""
+    if not db_user:
+        await callback.answer("Сначала пройди настройку")
+        return
+
+    parts = callback.data.split(":")
+    field = parts[1]
+    short_id = parts[2] if len(parts) > 2 else ""
+
+    context = _get_context(db_user)
+    items = items_of(context.get(field))
+    full_id = resolve_id(items, short_id) if short_id else None
+
+    if not full_id:
+        await callback.answer("Запись не найдена")
+        return
+
+    context = remove_context_item(context, field, full_id)
+    await db.set_child_context(callback.from_user.id, context)
+
+    items = items_of(context.get(field))
+    labels = {
+        "child_features": "⚠️ Особенности",
+        "child_character": "🌟 Характер",
+        "child_notes": "📝 Заметки",
+    }
+    if items:
+        await callback.message.edit_text(
+            f"<b>{labels.get(field, field)}</b>\n\n"
+            "✏️ — изменить запись, 🗑 — удалить, ➕ — добавить новую:",
+            reply_markup=items_edit_keyboard(field, items),
+        )
+    else:
+        await callback.message.edit_text(
+            f"<b>{labels.get(field, field)}</b>\n\nЗаписей больше нет.",
+            reply_markup=items_edit_keyboard(field, items),
+        )
+    await callback.answer("Удалено")
 
 
 @router.callback_query(F.data.startswith("gender:"))
