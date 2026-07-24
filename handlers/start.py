@@ -48,6 +48,16 @@ def _get_context(db_user: dict) -> dict:
         return {}
 
 
+def _items_list_text(label: str, items: list) -> str:
+    """Нумерованный список записей для тела сообщения (полный текст, без обрезки)."""
+    lines = [f"<b>{label}</b>\n"]
+    for i, it in enumerate(items, start=1):
+        t = (it.get("text") or "").strip()
+        lines.append(f"<b>{i}.</b> {t}")
+    lines.append("\n<i>✏️ N — изменить · 🗑 N — удалить · ➕ — добавить</i>")
+    return "\n".join(lines)
+
+
 # ─── /start ───────────────────────────────────────────────────────────────────
 
 @router.message(CommandStart())
@@ -437,8 +447,7 @@ async def profile_edit_start(callback: CallbackQuery, state: FSMContext, db_user
         items = items_of(context.get(field))
         if items:
             await callback.message.answer(
-                f"<b>{itemized[field]}</b>\n\n"
-                "✏️ — изменить запись, 🗑 — удалить, ➕ — добавить новую:",
+                _items_list_text(itemized[field], items),
                 reply_markup=items_edit_keyboard(field, items),
             )
             await callback.answer()
@@ -563,8 +572,7 @@ async def profile_item_delete(callback: CallbackQuery, db_user: dict = None):
     }
     if items:
         await callback.message.edit_text(
-            f"<b>{labels.get(field, field)}</b>\n\n"
-            "✏️ — изменить запись, 🗑 — удалить, ➕ — добавить новую:",
+            _items_list_text(labels.get(field, field), items),
             reply_markup=items_edit_keyboard(field, items),
         )
     else:
